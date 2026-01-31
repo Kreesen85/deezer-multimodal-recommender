@@ -141,7 +141,78 @@ def add_duration_features(df):
     return df
 
 
-def preprocess_data(df, add_features=True):
+def add_user_features(df):
+    """
+    Create user-level engagement features based on historical behavior
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame with user behavior data
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with added user-level features
+    
+    Note:
+    -----
+    This function computes user aggregations from the current dataset.
+    For production, these should be computed from historical data up to 
+    the prediction point to avoid data leakage.
+    """
+    print("  Calculating user statistics...")
+    
+    # Calculate user-level aggregations
+    user_stats = df.groupby('user_id').agg({
+        'is_listened': ['mean', 'sum', 'count'],  # Listen rate, total listens, sessions
+        'genre_id': 'nunique',  # Genre diversity
+        'artist_id': 'nunique',  # Artist diversity
+        'context_type': 'nunique',  # Context variety
+    }).reset_index()
+    
+    # Flatten column names
+    user_stats.columns = ['user_id', 'user_listen_rate', 'user_total_listens', 
+                          'user_session_count', 'user_genre_diversity', 
+                          'user_artist_diversity', 'user_context_variety']
+    
+    # Calculate skip rate
+    user_stats['user_skip_rate'] = 1 - user_stats['user_listen_rate']
+    
+    # User engagement segment based on skip rate
+    def categorize_user_segment(skip_rate):
+        if skip_rate == 0:
+            return 0  # Never Skips
+        elif skip_rate < 0.1:
+            return 1  # Rarely Skips
+        elif skip_rate < 0.25:
+            return 2  # Occasional Skipper
+        elif skip_rate < 0.5:
+            return 3  # Moderate Skipper
+        else:
+            return 4  # Frequent Skipper
+    
+    user_stats['user_engagement_segment'] = user_stats['user_skip_rate'].apply(categorize_user_segment)
+    
+    # Calculate composite engagement score (0-1 scale)
+    max_sessions = user_stats['user_session_count'].max()
+    max_genres = user_stats['user_genre_diversity'].max()
+    
+    user_stats['user_engagement_score'] = (
+        user_stats['user_listen_rate'] * 0.5 +  # 50% weight on listen rate
+        (user_stats['user_session_count'] / max_sessions) * 0.3 +  # 30% on activity
+        (user_stats['user_genre_diversity'] / max_genres) * 0.2  # 20% on diversity
+    )
+    
+    print(f"  Computed features for {len(user_stats):,} unique users")
+    
+    # Merge back to original dataframe
+    df = df.merge(user_stats, on='user_id', how='left')
+    
+    return df
+
+
+def preprocess_data(df, add_features=True, add_user_features_flag=True):
     """
     Complete preprocessing pipeline
     
@@ -151,11 +222,22 @@ def preprocess_data(df, add_features=True):
         Raw DataFrame
     add_features : bool
         Whether to add engineered features (default: True)
+    add_user_features_flag : bool
+        Whether to add user-level engagement features (default: True)
+        Note: Set to False for test data if computing from training data separately
     
     Returns:
     --------
     pandas.DataFrame
         Preprocessed DataFrame with engineered features
+    
+    Warning:
+    --------
+    User features computed from the same dataset can cause data leakage in training.
+    For proper ML workflow:
+    1. Compute user stats from training data only
+    2. Apply those stats to validation/test data
+    3. Handle new users (cold start) with defaults
     """
     df = df.copy()
     
@@ -168,6 +250,10 @@ def preprocess_data(df, add_features=True):
         
         print("Adding duration features...")
         df = add_duration_features(df)
+        
+        if add_user_features_flag:
+            print("Adding user engagement features...")
+            df = add_user_features(df)
         
         print("✓ Feature engineering complete!")
     
@@ -204,6 +290,12 @@ def get_feature_lists():
         
         'duration_features': [
             'duration_minutes', 'duration_category', 'is_extended_track'
+        ],
+        
+        'user_features': [
+            'user_listen_rate', 'user_skip_rate', 'user_session_count',
+            'user_total_listens', 'user_genre_diversity', 'user_artist_diversity',
+            'user_context_variety', 'user_engagement_segment', 'user_engagement_score'
         ],
         
         'high_cardinality_ids': [
@@ -247,7 +339,129 @@ def print_preprocessing_summary(df_before, df_after):
         pct_pre_release = (n_pre_release / len(df_after)) * 100
         print(f"\nPre-release listening detected: {n_pre_release:,} ({pct_pre_release:.2f}%)")
     
+    # Check for user features
+    if 'user_engagement_segment' in df_after.columns:
+        segment_counts = df_after['user_engagement_segment'].value_counts().sort_index()
+        segment_names = ['Never Skips', 'Rarely Skips', 'Occasional', 'Moderate', 'Frequent']
+        print(f"\nUser Engagement Distribution:")
+        for segment_id, count in segment_counts.items():
+            pct = (count / len(df_after)) * 100
+            segment_name = segment_names[segment_id] if segment_id < len(segment_names) else f"Unknown ({segment_id})"
+            print(f"  {segment_name}: {count:,} sessions ({pct:.1f}%)")
+    
     print("=" * 70)
+
+
+def compute_user_features_from_train(train_df):
+    """
+    Compute user features from training data to apply to test data
+    This prevents data leakage by ensuring user stats come only from training
+    
+    Parameters:
+    -----------
+    train_df : pandas.DataFrame
+        Training DataFrame with user behavior
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        User statistics DataFrame with user_id as key
+    """
+    print("Computing user features from training data...")
+    
+    user_stats = train_df.groupby('user_id').agg({
+        'is_listened': ['mean', 'sum', 'count'],
+        'genre_id': 'nunique',
+        'artist_id': 'nunique',
+        'context_type': 'nunique',
+    }).reset_index()
+    
+    user_stats.columns = ['user_id', 'user_listen_rate', 'user_total_listens', 
+                          'user_session_count', 'user_genre_diversity', 
+                          'user_artist_diversity', 'user_context_variety']
+    
+    user_stats['user_skip_rate'] = 1 - user_stats['user_listen_rate']
+    
+    # Engagement segment
+    def categorize_user_segment(skip_rate):
+        if skip_rate == 0:
+            return 0
+        elif skip_rate < 0.1:
+            return 1
+        elif skip_rate < 0.25:
+            return 2
+        elif skip_rate < 0.5:
+            return 3
+        else:
+            return 4
+    
+    user_stats['user_engagement_segment'] = user_stats['user_skip_rate'].apply(categorize_user_segment)
+    
+    # Engagement score
+    max_sessions = user_stats['user_session_count'].max()
+    max_genres = user_stats['user_genre_diversity'].max()
+    
+    user_stats['user_engagement_score'] = (
+        user_stats['user_listen_rate'] * 0.5 +
+        (user_stats['user_session_count'] / max_sessions) * 0.3 +
+        (user_stats['user_genre_diversity'] / max_genres) * 0.2
+    )
+    
+    print(f"✓ Computed features for {len(user_stats):,} unique users")
+    
+    return user_stats
+
+
+def apply_user_features(df, user_stats, default_values=None):
+    """
+    Apply pre-computed user features to a DataFrame
+    Handles new users (cold start) with default values
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame to add user features to
+    user_stats : pandas.DataFrame
+        Pre-computed user statistics from training data
+    default_values : dict, optional
+        Default values for new users. If None, uses global averages from user_stats
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame with user features added
+    """
+    print("Applying user features...")
+    
+    # Merge user stats
+    df = df.merge(user_stats, on='user_id', how='left')
+    
+    # Handle new users (cold start)
+    if default_values is None:
+        # Use training data averages as defaults
+        default_values = {
+            'user_listen_rate': user_stats['user_listen_rate'].mean(),
+            'user_skip_rate': user_stats['user_skip_rate'].mean(),
+            'user_session_count': user_stats['user_session_count'].mean(),
+            'user_total_listens': user_stats['user_total_listens'].mean(),
+            'user_genre_diversity': user_stats['user_genre_diversity'].mean(),
+            'user_artist_diversity': user_stats['user_artist_diversity'].mean(),
+            'user_context_variety': user_stats['user_context_variety'].mean(),
+            'user_engagement_segment': 3,  # Default to "Moderate"
+            'user_engagement_score': user_stats['user_engagement_score'].mean()
+        }
+    
+    # Fill missing values for new users
+    n_new_users = df['user_listen_rate'].isna().sum()
+    if n_new_users > 0:
+        print(f"  Found {n_new_users:,} sessions from new users - applying defaults")
+        for col, default_val in default_values.items():
+            if col in df.columns:
+                df[col] = df[col].fillna(default_val)
+    
+    print("✓ User features applied")
+    
+    return df
 
 
 # Example usage
@@ -255,27 +469,57 @@ if __name__ == "__main__":
     print("Deezer Data Preprocessing Utilities")
     print("=" * 70)
     
-    print("\nExample usage:")
+    print("\n=== BASIC USAGE ===")
     print("""
     # Load data
     df = pd.read_csv('data/raw/train.csv')
     
-    # Preprocess with feature engineering
+    # Preprocess with feature engineering (including user features)
     df_processed = preprocess_data(df, add_features=True)
     
     # Get feature lists
     features = get_feature_lists()
     
     # Use specific feature sets for modeling
-    model_features = (features['original_features'] + 
-                     features['temporal_features'] + 
-                     features['release_features'])
+    model_features = (features['temporal_features'] + 
+                     features['release_features'] +
+                     features['user_features'])
     
     X = df_processed[model_features]
     y = df_processed['is_listened']
     """)
     
-    print("\nFeature Categories:")
+    print("\n=== PROPER TRAIN/TEST WORKFLOW (Prevents Data Leakage) ===")
+    print("""
+    # 1. Load training data
+    train_df = pd.read_csv('data/raw/train.csv')
+    
+    # 2. Add temporal, release, duration features (no leakage risk)
+    train_df = add_temporal_features(train_df)
+    train_df = add_release_features(train_df)
+    train_df = add_duration_features(train_df)
+    
+    # 3. Compute user features FROM TRAINING DATA ONLY
+    user_stats = compute_user_features_from_train(train_df)
+    
+    # 4. Apply user features to training data
+    train_df = apply_user_features(train_df, user_stats)
+    
+    # 5. Load test data
+    test_df = pd.read_csv('data/raw/test.csv')
+    
+    # 6. Add temporal, release, duration features to test
+    test_df = add_temporal_features(test_df)
+    test_df = add_release_features(test_df)
+    test_df = add_duration_features(test_df)
+    
+    # 7. Apply SAME user stats from training to test (handles new users)
+    test_df = apply_user_features(test_df, user_stats)
+    
+    # Now train_df and test_df have consistent features without leakage
+    """)
+    
+    print("\n=== FEATURE CATEGORIES ===")
     features = get_feature_lists()
     for category, feat_list in features.items():
         print(f"\n{category}:")
