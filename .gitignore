@@ -1,6 +1,8 @@
 # Data
 data/*
 !data/README.md
+!data/*.md
+!data/*.txt
 
 # Python
 __pycache__/
