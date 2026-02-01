@@ -51,9 +51,9 @@ User segmentation by skip behavior
 - `user_segment_detailed_comparison.png` - Demographics by segment
 
 ### Data Files
-- `eda_full_summary.txt` - Key findings
-- `temporal_inconsistencies_sample.csv` - Temporal issues
-- `user_segments.csv` - User segmentation (19,165 users)
+- `eda_full_summary.txt` - Key findings (in this directory)
+- `../../data/processed/eda/temporal_inconsistencies_sample.csv` - Temporal issues
+- `../../data/processed/eda/user_segments.csv` - User segmentation (19,165 users)
 
 ---
 

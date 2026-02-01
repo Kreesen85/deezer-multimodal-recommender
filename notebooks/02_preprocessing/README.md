@@ -26,7 +26,8 @@ Basic preprocessing (no user features)
 
 ## 📁 Generated Files
 
-### Sample Outputs
+**Location**: `data/processed/preprocessing/`
+
 - `train_preprocessed_sample.csv` - Training data with all features
 - `test_preprocessed_sample.csv` - Test data with all features  
 - `user_stats_from_train.csv` - User statistics (for applying to test)

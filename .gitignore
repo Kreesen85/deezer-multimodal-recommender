@@ -1,11 +1,13 @@
-# Data
-data/*
+# Data - exclude raw and large processed files
+data/raw/*
+data/processed/*
+
+# But keep documentation and metadata
 !data/README.md
 !data/*.md
 !data/*.txt
-
-# Large sample files (optional - uncomment to exclude from git)
-# notebooks/cf_sample_500k.csv
+!data/processed/samples/*.txt
+!data/processed/samples/create_*.py
 
 # Python
 __pycache__/

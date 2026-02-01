@@ -1,230 +1,191 @@
-# Notebooks
+# Notebooks Directory
 
-This directory contains exploratory analysis, experiments, and data quality checks for the Deezer Sequential Skip Prediction project.
+Organized structure for all analysis, experiments, and documentation.
+
+## 📁 Directory Structure
+
+```
+notebooks/
+├── 01_eda/              # Exploratory Data Analysis
+├── 02_preprocessing/    # Data preprocessing & feature engineering
+├── 03_baselines/        # Baseline models (CF, surprise, etc.)
+├── 04_experiments/      # Experiments and model development
+├── docs/                # Documentation and reports
+├── archive/             # Old/deprecated files
+└── README.md            # This file
+```
+
+**Data files** are stored in `../data/processed/` (see Data Files section below)
 
 ---
 
-## Exploratory Data Analysis (EDA)
+## 01_eda/ - Exploratory Data Analysis
 
-### `eda_full_optimized.py`
-**Comprehensive full-dataset EDA** - Analyzes entire 7.5M training dataset efficiently.
+Scripts and outputs for understanding the data:
 
-**Features:**
-- Chunked reading for exact statistics on full dataset
-- 1M-row sample for visualizations
-- Target distribution, user demographics, temporal patterns
-- Platform/context analysis, feature correlations
-- Optimized for performance (~30-40 seconds runtime)
+- `eda_full_optimized.py` - Complete EDA on 7.5M dataset
+- `data_quality_check.py` - Data quality validation
+- `check_temporal_consistency.py` - Temporal analysis
+- `user_skip_behavior_analysis.py` - User segmentation analysis
+- `eda_full_*.png` - EDA visualizations (kept in this dir)
+- `eda_full_summary.txt` - Key findings
 
-**Run it:**
+**Run order**: data_quality → eda_full → temporal → user_behavior
+
+---
+
+## 02_preprocessing/ - Data Preprocessing
+
+Scripts for feature engineering and data preparation:
+
+- `demo_preprocessing.py` - Basic preprocessing demo
+- `demo_preprocessing_with_users.py` ⭐ Complete preprocessing with user features
+
+**Outputs**: See `../data/processed/preprocessing/` for generated CSV files
+
+**See**: `docs/USER_FEATURES_IMPLEMENTATION.md` for details
+
+---
+
+## 03_baselines/ - Baseline Models
+
+Collaborative filtering and baseline model implementations:
+
+- `baseline_collaborative_filtering.py` ⭐ Scikit-learn CF models (AUC 0.77)
+- `baseline_surprise_models.py` - Surprise library models (if available)
+- `collaborative_filtering_results.png` - Results visualization (kept in this dir)
+
+**Results**: See `../data/processed/collaborative_filtering_results.csv`
+
+**See**: `docs/COLLABORATIVE_FILTERING_BASELINE_RESULTS.md`
+
+---
+
+## 04_experiments/ - Experiments
+
+Advanced models and experimental work:
+
+- `experiments.ipynb` - Main experimentation notebook
+- (Add your experiment notebooks here)
+
+---
+
+## docs/ - Documentation
+
+All markdown documentation and reports:
+
+- `COLLABORATIVE_FILTERING_BASELINE_RESULTS.md` - CF baseline results
+- `USER_FEATURES_IMPLEMENTATION.md` - Feature engineering guide
+- `USER_SKIP_BEHAVIOR_ANALYSIS.md` - User behavior analysis
+- `CF_SAMPLE_TEAM_GUIDE.md` - Team collaboration guide
+- `README_CF_SAMPLE.md` - Sample dataset quick start
+- `SAMPLING_COMPARISON.md` - Sampling methodology comparison
+
+---
+
+## archive/ - Archived Files
+
+Deprecated or old test files kept for reference:
+
+- `test_*.py` - Old test scripts
+
+---
+
+## 📊 Data Files
+
+All data files (CSVs) are stored in `../data/processed/` following proper data management practices:
+
+### Sample Datasets
+**Location**: `../data/processed/samples/`
+- `cf_sample_500k.csv` (33.5 MB) - Random sample for CF experiments
+- `cf_sample_info.txt` - Sample statistics
+- `create_cf_sample_random.py` - Sample creation script
+
+### Preprocessing Outputs
+**Location**: `../data/processed/preprocessing/`
+- `train_preprocessed_sample.csv` - Training data with 31 features
+- `test_preprocessed_sample.csv` - Test data with 31 features
+- `user_stats_from_train.csv` - User statistics
+
+### EDA Outputs
+**Location**: `../data/processed/eda/`
+- `user_segments.csv` - User segmentation (19,165 users)
+- `temporal_inconsistencies_sample.csv` - Temporal issues
+
+### Results
+**Location**: `../data/processed/`
+- `collaborative_filtering_results.csv` - Model comparison
+
+**See**: `../data/README.md` for complete data documentation
+
+---
+
+## 🚀 Quick Start
+
+### Run Full EDA
 ```bash
-cd notebooks
+cd notebooks/01_eda
 python eda_full_optimized.py
 ```
 
-**Outputs:**
-- `eda_full_target.png` - Target variable distribution
-- `eda_full_demographics.png` - Age and gender analysis
-- `eda_full_duration.png` - Track duration patterns
-- `eda_full_temporal.png` - Time-of-day and day-of-week patterns
-- `eda_full_platform.png` - Platform and context statistics
-- `eda_full_correlations.png` - Feature correlation heatmap
-- `eda_full_summary.txt` - Key findings and statistics
-
----
-
-## Data Quality & Consistency Checks
-
-### `data_quality_check.py`
-**Systematic data quality assessment** - Checks for common data issues.
-
-**Validates:**
-- Missing values and data types
-- Target variable integrity (binary 0/1)
-- Value ranges (age 15-25, duration > 0)
-- Categorical variables and date formats
-- Duplicate records
-
-**Run it:**
+### Preprocess Data
 ```bash
-cd notebooks
-python data_quality_check.py
-```
-
-**Output:** Console summary with quality assessment
-
-### `check_temporal_consistency.py`
-**Temporal consistency analysis** - Identifies pre-release listening patterns.
-
-**Checks:**
-- Listening events before track release dates
-- Distribution of temporal gaps
-- Track age categories
-- Statistical analysis of inconsistencies
-
-**Run it:**
-```bash
-cd notebooks
-python check_temporal_consistency.py
-```
-
-**Outputs:**
-- Console report with statistics
-- `temporal_inconsistencies_sample.csv` - Sample of problematic records
-
-**Finding:** 0.45% of records show pre-release listening (kept as feature)
-
----
-
-## User Behavior Analysis
-
-### `user_skip_behavior_analysis.py`
-**User segmentation by skip behavior** - Analyzes users who don't skip vs. frequent skippers.
-
-**Analyzes:**
-- User-level skip rate distribution
-- User segments (Never/Rarely/Occasional/Moderate/Frequent skippers)
-- Demographics by segment (age, gender)
-- Listening diversity (genres, artists, contexts)
-- Statistical significance tests
-
-**Run it:**
-```bash
-cd notebooks
-python user_skip_behavior_analysis.py
-```
-
-**Outputs:**
-- `user_skip_behavior_analysis.png` - Segment distributions and comparisons
-- `user_segment_detailed_comparison.png` - Detailed demographic analysis
-- `user_segments.csv` - User-level data with segment labels (19,165 users)
-- `USER_SKIP_BEHAVIOR_ANALYSIS.md` - Complete analysis report
-
-**Key Finding:** 19.3% of users rarely skip, age and session count are significant predictors
-
-### `USER_SKIP_BEHAVIOR_ANALYSIS.md`
-**Detailed report** on user skip behavior analysis with:
-- User segment distribution and profiles
-- Statistical comparisons (engaged vs. skippers)
-- Business insights and recommendations
-- Feature engineering implications
-
----
-
-## Feature Engineering & Preprocessing
-
-### `demo_preprocessing.py`
-**Demonstrates basic preprocessing** pipeline (temporal, release, duration features).
-
-**Run it:**
-```bash
-cd notebooks
-python demo_preprocessing.py
-```
-
-**Output:** Console summary showing 22 new features added
-
-### `demo_preprocessing_with_users.py`
-**Complete preprocessing workflow** - Shows proper train/test split with user features.
-
-**Demonstrates:**
-- Adding temporal, release, and duration features
-- Computing user engagement features from training data
-- Applying user stats to test data (prevents data leakage)
-- Handling new users (cold start) with defaults
-- Feature consistency validation
-
-**Run it:**
-```bash
-cd notebooks
+cd notebooks/02_preprocessing
 python demo_preprocessing_with_users.py
 ```
 
-**Outputs:**
-- `train_preprocessed_sample.csv` - Training data with all features
-- `test_preprocessed_sample.csv` - Test data with all features
-- `user_stats_from_train.csv` - User statistics lookup table
-
-**Features Generated:** 31 new features (9 user-level + 22 track/temporal)
-
-### `USER_FEATURES_IMPLEMENTATION.md`
-**Implementation guide** for user engagement features:
-- 9 user-level features explained
-- Proper train/test workflow to prevent data leakage
-- Cold start strategy for new users
-- Model integration guidelines
-- Performance expectations
-
----
-
-## Documentation
-
-### `USER_SKIP_BEHAVIOR_ANALYSIS.md`
-Full report on user skip behavior analysis (see above)
-
-### `USER_FEATURES_IMPLEMENTATION.md`
-Implementation guide for user engagement features (see above)
-
----
-
-## Interactive Notebooks
-
-### `exploration.ipynb`
-Interactive Jupyter notebook for exploratory analysis (create as needed)
-
-### `experiments.ipynb`
-Experimental model development notebook (create as needed)
-
----
-
-## Output Files Summary
-
-### Visualizations:
-- `eda_full_*.png` - Full dataset EDA visualizations
-- `user_skip_behavior_analysis.png` - User segmentation
-- `user_segment_detailed_comparison.png` - Demographic comparisons
-
-### Data Files:
-- `eda_full_summary.txt` - EDA key findings
-- `temporal_inconsistencies_sample.csv` - Pre-release listening samples
-- `user_segments.csv` - User segmentation (19K users)
-- `train_preprocessed_sample.csv` - Preprocessed training sample
-- `test_preprocessed_sample.csv` - Preprocessed test sample
-- `user_stats_from_train.csv` - User statistics for modeling
-
-### Reports:
-- `USER_SKIP_BEHAVIOR_ANALYSIS.md` - User behavior analysis
-- `USER_FEATURES_IMPLEMENTATION.md` - Feature engineering guide
-
----
-
-## Setup
-
-Make sure you have installed the required packages:
+### Run Baseline Models
 ```bash
-pip install -r ../requirements.txt
+cd notebooks/03_baselines
+python baseline_collaborative_filtering.py
+```
+
+### Start Experiments
+```bash
+cd notebooks/04_experiments
+jupyter notebook experiments.ipynb
+```
+
+### Load Sample Data
+```python
+import pandas as pd
+df = pd.read_csv('../data/processed/samples/cf_sample_500k.csv')
 ```
 
 ---
 
-## Recommended Workflow
+## 📝 Key Files
 
-1. **Data Quality**: Run `data_quality_check.py` and `check_temporal_consistency.py`
-2. **EDA**: Run `eda_full_optimized.py` to understand the data
-3. **User Analysis**: Run `user_skip_behavior_analysis.py` for user insights
-4. **Feature Engineering**: Run `demo_preprocessing_with_users.py` to see full pipeline
-5. **Modeling**: Proceed to model development with preprocessed features
-
----
-
-## Key Findings Summary
-
-✅ **Data Quality**: High quality, 99.55% consistent, minimal cleaning required  
-✅ **Pre-release Listening**: 0.45% of records (kept as feature)  
-✅ **User Segments**: 5 clear segments identified (6.8% never skip, 26.9% frequent skippers)  
-✅ **Predictive Features**: Age, session count, skip rate are statistically significant  
-✅ **Feature Count**: 31 engineered features (9 user + 22 track/temporal)  
+| File | Location | Purpose |
+|------|----------|---------|
+| `eda_full_optimized.py` | `01_eda/` | Complete dataset EDA |
+| `demo_preprocessing_with_users.py` | `02_preprocessing/` | Feature engineering pipeline |
+| `baseline_collaborative_filtering.py` | `03_baselines/` | CF baseline models |
+| `cf_sample_500k.csv` | `../data/processed/samples/` | Sample dataset (500K interactions) |
+| `experiments.ipynb` | `04_experiments/` | Main experimentation notebook |
 
 ---
 
-*All scripts are optimized for the 7.5M-row training dataset and run in < 1 minute*
+## 📚 Documentation
+
+All documentation is in `docs/` directory. Start with:
+1. `COLLABORATIVE_FILTERING_BASELINE_RESULTS.md` - Baseline results (AUC 0.77)
+2. `USER_FEATURES_IMPLEMENTATION.md` - Feature engineering (31 features)
+3. `CF_SAMPLE_TEAM_GUIDE.md` - Team collaboration guide
+
+---
+
+## 🔧 Organization Principles
+
+1. **Code in notebooks/** - All scripts and notebooks
+2. **Data in data/processed/** - All CSV files and datasets
+3. **Docs in notebooks/docs/** - All markdown documentation
+4. **Visualizations with code** - PNG files stay with source scripts
+
+This follows best practices for data science project organization.
+
+---
+
+**Last Updated**: February 1, 2026  
+**Total Notebooks**: 43 files organized  
+**Status**: ✅ Organized and documented

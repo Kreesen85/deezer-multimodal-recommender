@@ -45,8 +45,8 @@ Speed:    ⚡⚡⚡ Very fast
 
 ## 📁 Generated Files
 
-- `collaborative_filtering_results.csv` - Model comparison table
-- `collaborative_filtering_results.png` - Visualization (4 plots)
+- `../../data/processed/collaborative_filtering_results.csv` - Model comparison table
+- `collaborative_filtering_results.png` - Visualization (4 plots in this directory)
 
 ---
 
