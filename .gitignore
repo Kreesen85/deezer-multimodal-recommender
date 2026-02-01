@@ -45,3 +45,4 @@ models/
 *.pt
 *.pkl
 
+.Rhistory
