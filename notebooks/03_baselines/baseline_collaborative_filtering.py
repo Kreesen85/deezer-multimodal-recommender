@@ -16,6 +16,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, roc_auc_score
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from scipy.sparse import csr_matrix
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 import time
@@ -36,7 +38,7 @@ SAMPLE_SIZE = 500000  # 500K for reasonable speed
 print(f"Loading team standard sample...")
 
 # Use the standard team sample for reproducibility
-df = pd.read_csv('../data/processed/samples/cf_sample_500k.csv')
+df = pd.read_csv('../../data/processed/samples/cf_sample_500k.csv')
 print(f"✓ Loaded {len(df):,} interactions")
 print(f"  Unique users: {df['user_id'].nunique():,}")
 print(f"  Unique items: {df['media_id'].nunique():,}")
