@@ -33,9 +33,10 @@ print("=" * 80)
 print("\n[Step 1] Loading data...")
 
 SAMPLE_SIZE = 500000  # 500K for reasonable speed
-print(f"Loading {SAMPLE_SIZE:,} samples...")
+print(f"Loading team standard sample...")
 
-df = pd.read_csv('../data/raw/train.csv', nrows=SAMPLE_SIZE)
+# Use the standard team sample for reproducibility
+df = pd.read_csv('../data/processed/samples/cf_sample_500k.csv')
 print(f"✓ Loaded {len(df):,} interactions")
 print(f"  Unique users: {df['user_id'].nunique():,}")
 print(f"  Unique items: {df['media_id'].nunique():,}")

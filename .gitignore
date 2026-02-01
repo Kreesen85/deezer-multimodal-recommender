@@ -6,6 +6,7 @@ data/processed/*
 !data/README.md
 !data/*.md
 !data/*.txt
+!data/processed/samples/README.md
 !data/processed/samples/*.txt
 !data/processed/samples/create_*.py
 
