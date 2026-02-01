@@ -19,12 +19,7 @@
 - ✅ `create_cf_sample_random.py` - Regeneration script  
 - ✅ `README.md` - Documentation
 
-### ❌ What We DELETED
 
-- ❌ `cf_sample_500k_sequential_old.csv` (34 MB saved!)
-- ❌ `cf_sample_info_old.txt`
-- ❌ `create_cf_sample.py` (old method)
-- ❌ Old preprocessing samples (100K, different size)
 
 ---
 
@@ -86,13 +81,9 @@ user_stats = pd.read_csv('data/processed/preprocessing/user_stats_500k.csv')
 
 ## ⚠️ IMPORTANT: Update Your Scripts
 
-### Before (OLD - Don't use):
-```python
-# DON'T DO THIS - creates random sequential samples
-df = pd.read_csv('../data/raw/train.csv', nrows=500000)
-```
 
-### After (NEW - Use this):
+
+### Use this :
 ```python
 # DO THIS - everyone gets same data
 df = pd.read_csv('../data/processed/samples/cf_sample_500k.csv')
