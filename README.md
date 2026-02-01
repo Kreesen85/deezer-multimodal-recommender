@@ -97,14 +97,24 @@ deezer-multimodal-recommender/
 
 ### 1. Setup Environment
 
+**Recommended: Use Anaconda (Python 3.13)**
+
 ```bash
 # Clone repository
 git clone <repository-url>
 cd deezer-multimodal-recommender
 
-# Install dependencies
-pip install -r requirements.txt
+# Use Anaconda base environment (all packages already installed)
+conda activate base
+
+# OR install dependencies if needed
+# pip install -r requirements.txt
+
+# Test environment
+python test_environment.py
 ```
+
+**Note**: See `PYTHON_ENVIRONMENT_SETUP.md` for detailed setup instructions and troubleshooting.
 
 ### 2. Get the Data
 
@@ -245,12 +255,14 @@ With user engagement features:
 
 ## Technologies
 
-- **Python 3.8+**
-- **pandas** - Data manipulation
-- **numpy** - Numerical computing
-- **scikit-learn** - Machine learning
-- **matplotlib, seaborn** - Visualization
-- **scipy** - Statistical analysis
+- **Python 3.13.9** (Anaconda)
+- **pandas 3.0.0** - Data manipulation
+- **numpy 2.4.1** - Numerical computing
+- **scikit-learn 1.8.0** - Machine learning & collaborative filtering
+- **matplotlib 3.10.8, seaborn 0.13.2** - Visualization
+- **scipy 1.17.0** - Statistical analysis
+
+**Note**: scikit-surprise is incompatible with Python 3.13. Use scikit-learn for collaborative filtering instead.
 
 ---
 

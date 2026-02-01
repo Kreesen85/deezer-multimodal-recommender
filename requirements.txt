@@ -12,10 +12,9 @@ scikit-learn>=1.4.0
 scipy>=1.12.0
 
 # Recommender Systems
-# Note: Using Python 3.11 virtual environment (venv311/) for compatibility
-# scikit-surprise: Requires numpy<2.0 (compatibility issues with numpy 2.x)
-# implicit: Works with Python 3.11
-# Using scikit-learn for collaborative filtering (more stable)
+# Note: scikit-surprise is incompatible with Python 3.13 and NumPy 2.x
+# Using scikit-learn for collaborative filtering instead (more stable and maintained)
+# scikit-surprise  # Commented out - use scikit-learn alternatives instead
 
 # Jupyter
 jupyter>=1.0.0

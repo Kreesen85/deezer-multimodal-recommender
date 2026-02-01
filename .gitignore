@@ -4,6 +4,9 @@ data/*
 !data/*.md
 !data/*.txt
 
+# Large sample files (optional - uncomment to exclude from git)
+# notebooks/cf_sample_500k.csv
+
 # Python
 __pycache__/
 *.pyc
@@ -12,6 +15,9 @@ __pycache__/
 .env
 .venv
 venv/
+venv311/
+venv311_backup_broken/
+conda-env/
 
 # Jupyter
 .ipynb_checkpoints/
