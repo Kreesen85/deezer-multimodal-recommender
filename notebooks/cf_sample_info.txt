@@ -1,0 +1,61 @@
+COLLABORATIVE FILTERING SAMPLE DATASET
+================================================================================
+
+Created: 2026-02-01 12:41:55.538323
+Random Seed: 42
+Sample Size: 500,000
+
+DATASET STATISTICS
+--------------------------------------------------------------------------------
+Total interactions:             500,000
+Unique users:                    17,429
+Unique items (tracks):           20,475
+Unique albums:                    6,852
+Unique artists:                   6,961
+Unique genres:                      738
+
+Listen rate:                      0.698 (69.8%)
+Skip rate:                        0.302 (30.2%)
+
+Matrix size (U×I):          356,858,775
+Matrix sparsity:                  99.86%
+
+Avg interactions/user:             28.7
+Avg interactions/item:             24.4
+
+COLUMNS
+--------------------------------------------------------------------------------
+  - genre_id
+  - ts_listen
+  - media_id
+  - album_id
+  - context_type
+  - release_date
+  - platform_name
+  - platform_family
+  - media_duration
+  - listen_type
+  - user_gender
+  - user_id
+  - artist_id
+  - user_age
+  - is_listened
+
+FILE INFO
+--------------------------------------------------------------------------------
+Filename:  cf_sample_500k.csv
+Size:      33.8 MB
+Format:    CSV (comma-separated)
+Encoding:  UTF-8
+
+USAGE
+--------------------------------------------------------------------------------
+import pandas as pd
+df = pd.read_csv('cf_sample_500k.csv')
+
+# This sample is reproducible - all team members will have
+# the exact same data for collaborative filtering experiments.
+
+# To use with the baseline script:
+# Modify baseline_collaborative_filtering.py to load this file
+# instead of reading from train.csv with nrows
