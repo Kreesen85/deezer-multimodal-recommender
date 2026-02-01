@@ -1,107 +1,30 @@
-# 03_baselines/ - Baseline Models
+## 03_baselines – Collaborative Filtering
 
-Collaborative filtering and baseline model implementations.
+This folder contains baseline recommender system models
+used for comparison in the project.
 
-## 🎯 Models
+### Implemented Models
 
-### `baseline_collaborative_filtering.py` ⭐ **MAIN BASELINE**
-Scikit-learn collaborative filtering models
-- **User+Item Bias**: AUC 0.7699 (BEST)
-- **SVD**: Matrix factorization
-- **NMF**: Non-negative matrix factorization
-- **Global Baseline**: Mean predictor
+- Item-based Collaborative Filtering  
+  Uses co-occurrence of users between items (implicit feedback).
 
-**Run**: `python baseline_collaborative_filtering.py`
+- Matrix Factorization (SVD)  
+  Simple latent factor model trained on implicit interactions.
 
-**Expected Runtime**: ~60 seconds for 500K interactions
+### Dataset
 
-### `baseline_surprise_models.py`
-Surprise library models (requires scikit-surprise)
-- SVD, SVD++, NMF
-- KNN-based models
-- Note: May not work with Python 3.13
+- train_100k_preprocessed.csv
+- Implicit feedback (is_listened ∈ {0,1})
+- Train/test split: 80/20 (random)
 
----
+### Evaluation
 
-## 📊 Results
+- Offline evaluation
+- Metric: Hit@10
+- Same evaluation procedure used for all baseline models
 
-### Best Model: User+Item Bias
-```
-AUC:      0.7699
-Accuracy: 74.98%
-RMSE:     0.4168
-Speed:    ⚡⚡⚡ Very fast
-```
+### Notes
 
-### Performance Comparison
-| Model | AUC | Speed |
-|-------|-----|-------|
-| User+Item Bias | **0.7699** | ⚡⚡⚡ |
-| SVD | 0.6254 | ⚡⚡⚡ |
-| NMF | 0.5597 | ⚡ |
-| Global Baseline | 0.5000 | ⚡⚡⚡ |
-
----
-
-## 📁 Generated Files
-
-- `../../data/processed/collaborative_filtering_results.csv` - Model comparison table
-- `collaborative_filtering_results.png` - Visualization (4 plots in this directory)
-
----
-
-## 🔑 Key Insights
-
-1. **Simple bias model outperforms matrix factorization**
-   - User+Item Bias: 0.7699 AUC
-   - SVD: 0.6254 AUC
-   - Why? Binary ratings favor bias over latent factors
-
-2. **Pure CF achieves ~77% AUC without features**
-   - No demographics, no temporal, no content
-   - Just user-item interactions
-   - Strong baseline!
-
-3. **Cold start is a problem**
-   - Cannot predict for new users/items
-   - Need feature-based fallback
-
-4. **Expected improvement with features: +8-12 AUC points**
-   - Target: 0.85-0.90 AUC with full feature set
-
----
-
-## 📚 Documentation
-
-See `../docs/COLLABORATIVE_FILTERING_BASELINE_RESULTS.md` for:
-- Complete results analysis
-- Model comparisons
-- Next steps for production system
-- Feature-based recommendations
-
----
-
-## 🚀 Quick Start
-
-```bash
-# Run baseline CF models
-python baseline_collaborative_filtering.py
-
-# Check results
-cat collaborative_filtering_results.csv
-```
-
----
-
-## 💡 Next Steps
-
-1. Add features (user demographics, track content, temporal)
-2. Hybrid model (CF + features)
-3. Handle cold start problem
-4. Production deployment (2-stage: retrieval + ranking)
-
-Expected AUC with features: **0.85-0.90**
-
----
-
-*Baseline established: AUC 0.7699 (pure CF, no features)*
+- Models are intentionally kept simple for clarity and learning purposes.
+- No user or item features are used.
+- Cold-start users/items are not handled at this stage.
