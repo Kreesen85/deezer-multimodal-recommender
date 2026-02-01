@@ -1,0 +1,15 @@
+# XGBoost experiment outputs
+*.json
+*.csv
+*.png
+*.pkl
+*.model
+
+# Keep the scripts and documentation
+!README.md
+!*.py
+!*.sh
+
+# Python cache
+__pycache__/
+*.pyc
