@@ -1,0 +1,8 @@
+# Model files
+*.pt
+*.pth
+
+# Output files
+*.csv
+*.json
+*.png
