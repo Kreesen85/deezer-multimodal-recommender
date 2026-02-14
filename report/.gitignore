@@ -1,0 +1,15 @@
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.abs
+*.xmpdata
+
+# Downloaded template
+CEURART.zip
+CEURART/
+
+# Copied template files
+pdfa.xmpi
