@@ -4,6 +4,8 @@
 *.png
 *.pkl
 *.model
+*.txt
+!README.md
 
 # Keep the scripts and documentation
 !README.md
