@@ -1,0 +1,53 @@
+\documentclass[]{ceurart}
+
+\sloppy
+
+\begin{document}
+
+\copyrightyear{2026}
+\copyrightclause{Copyright for this paper by its authors.
+  Use permitted under Creative Commons License Attribution 4.0
+  International (CC BY 4.0).}
+
+\conference{Recommender Systems Course Project, February 2026}
+
+\title{Reflection: Lessons Learned from the Deezer Skip Prediction Project}
+
+\author[1]{Author One}[%
+email=author1@university.edu,
+]
+\author[1]{Author Two}[%
+email=author2@university.edu,
+]
+\author[1]{Author Three}[%
+email=author3@university.edu,
+]
+\address[1]{University Name, Department of Computer Science}
+
+\maketitle
+
+\section*{Scientific Knowledge}
+
+This project deepened our understanding of how recommender systems operate in practice versus theory. In coursework, collaborative filtering and matrix factorisation are presented as the core techniques, but we discovered that for the skip prediction task---framed as binary classification---gradient-boosted trees with carefully engineered features significantly outperformed traditional recommendation approaches. Our item-based collaborative filtering baseline achieved a modest Hit@10 rate, while XGBoost with 47 features reached 0.9341 AUC on the same data.
+
+We also learned the importance of distinguishing between \emph{offline evaluation metrics} and \emph{real-world recommendation quality}. AUC measures discriminative ability on a fixed test set, but tells us nothing about diversity, novelty, or long-term user satisfaction. Writing the production system section of our report forced us to engage with this gap concretely, rather than treating it as an abstract limitation.
+
+\section*{Technical Skills}
+
+The project provided substantial hands-on experience with the full machine learning pipeline:
+
+\begin{itemize}
+  \item \textbf{Feature engineering at scale}: Working with 7.5 million interactions taught us that feature computation must be designed for efficiency. Target encoding with smoothing, log-transformed counts, and leakage-free user statistics required careful implementation to avoid subtle data leakage bugs.
+  \item \textbf{Model training and comparison}: We gained practical experience with XGBoost, LightGBM, and PyTorch, learning their respective strengths. The finding that tree models outperform neural networks on tabular data---while theoretically known---was instructive to observe first-hand.
+  \item \textbf{Reproducibility and collaboration}: Maintaining clean code, version control with Git, and reproducible pipelines across three team members taught us that software engineering discipline is as important as modelling skill in data science projects.
+\end{itemize}
+
+\section*{Practical Recommender System Insights}
+
+Three insights stand out. First, \textbf{user--item interaction features dominate}: the most important features were not content-based metadata (genre, duration) but behavioural signals (user--artist affinity, smoothed listen rates). This suggests that collaborative signals, even when encoded as tabular features, capture more predictive information than content alone.
+
+Second, \textbf{simple ensembles hit diminishing returns quickly}: our XGBoost--LightGBM ensemble matched but did not exceed the best individual model, indicating high prediction correlation. In hindsight, diversity in model families (e.g., adding a sequence-based model) would likely yield more ensemble benefit than combining two tree-based methods.
+
+Third, \textbf{the gap between competition and production is larger than expected}. Our competition pipeline assumes a fixed catalogue, known users, and batch prediction. A real system must handle millions of new tracks weekly, users with no history, and sub-100ms latency constraints. This project gave us a concrete appreciation for why production recommender systems are complex distributed systems, not just well-tuned classifiers.
+
+\end{document}

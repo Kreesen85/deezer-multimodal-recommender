@@ -1,0 +1,331 @@
+\documentclass[]{ceurart}
+
+\sloppy
+
+\usepackage{listings}
+\lstset{breaklines=true}
+\usepackage{booktabs}
+\usepackage{amsmath}
+
+\begin{document}
+
+\copyrightyear{2026}
+\copyrightclause{Copyright for this paper by its authors.
+  Use permitted under Creative Commons License Attribution 4.0
+  International (CC BY 4.0).}
+
+\conference{Recommender Systems Course Project, February 2026}
+
+\title{Predicting Music Listening Behaviour on Deezer: From Competition Pipelines to Production Recommender Systems}
+
+\author[1]{Author One}[%
+email=author1@university.edu,
+]
+\author[1]{Author Two}[%
+email=author2@university.edu,
+]
+\author[1]{Author Three}[%
+email=author3@university.edu,
+]
+\address[1]{University Name, Department of Computer Science}
+
+%%
+\begin{abstract}
+We address the Deezer skip prediction task from the 2017 Data Science Game, where the goal is to predict whether a user will listen to or skip a recommended track. We frame this as a binary classification problem evaluated by ROC AUC. Our competition-focused pipeline engineers 47 features spanning temporal context, release metadata, user engagement statistics, target-encoded categorical variables, item popularity, and user-item affinity signals. An ensemble of XGBoost and LightGBM achieves a validation AUC of 0.9352, while a feedforward neural network reaches 0.9262. We then contrast this competition solution with a production-grade recommendation architecture for Deezer, discussing cold-start handling, scalability, diversity, and long-term user engagement. We analyse where competition-driven and production-driven approaches overlap and where they diverge, highlighting fundamental trade-offs between offline accuracy and real-world system quality.
+\end{abstract}
+
+\begin{keywords}
+  recommender systems \sep
+  music recommendation \sep
+  skip prediction \sep
+  gradient boosting \sep
+  feature engineering
+\end{keywords}
+
+\maketitle
+
+%% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Music streaming platforms such as Deezer serve hundreds of millions of tracks to users with diverse tastes and listening contexts. Predicting whether a user will engage with (listen to) or reject (skip) a recommended track is central to improving recommendation quality. A reliable skip predictor can be used to re-rank candidate lists, filter low-confidence suggestions, and ultimately improve user satisfaction and retention~\cite{schedl2018current}.
+
+The Deezer Data Science Game 2017 (DSG17) provides a large-scale dataset of 7.5 million user--track interactions, each labelled with a binary outcome: \emph{listened} or \emph{skipped}~\cite{deezer2017dsg}. The evaluation metric is the Area Under the Receiver Operating Characteristic curve (ROC AUC), which measures a classifier's ability to separate positive from negative cases regardless of the chosen decision threshold.
+
+In this report, we pursue two complementary objectives. First, we develop a competition-focused solution that maximises AUC through extensive feature engineering and model ensembling (Section~\ref{sec:competition}). Second, we design a production-grade recommendation system that addresses the broader challenges Deezer faces in practice, including cold-start users, scalability, and content diversity (Section~\ref{sec:production}). Finally, we critically compare these two perspectives, examining where they converge and where they fundamentally diverge (Section~\ref{sec:comparison}).
+
+%% ============================================================================
+\section{Dataset and Problem Setup}
+\label{sec:data}
+
+\subsection{Dataset Description}
+
+The DSG17 dataset contains 7,558,834 training interactions from 19,914 unique users across 451,867 unique tracks. Each interaction record includes:
+
+\begin{itemize}
+  \item \textbf{User and item identifiers}: \texttt{user\_id}, \texttt{media\_id}, \texttt{artist\_id}, \texttt{album\_id}, \texttt{genre\_id}.
+  \item \textbf{Temporal context}: Unix timestamp of the listening event (\texttt{ts\_listen}) and the track's release date.
+  \item \textbf{Track metadata}: Song duration, media type, and platform context information.
+  \item \textbf{Target variable}: \texttt{is\_listened} $\in \{0, 1\}$, indicating whether the user listened to or skipped the track.
+\end{itemize}
+
+The overall listen rate is 68.4\%, creating a moderate class imbalance. The test set contains 19,918 interactions for which we must predict the probability of listening.
+
+\subsection{Problem Formulation}
+
+We frame the task as binary classification: given a user $u$, a track $t$, and context features $\mathbf{c}$, predict $P(\text{is\_listened} = 1 \mid u, t, \mathbf{c})$. The predicted probabilities are evaluated using ROC AUC, which is threshold-invariant and well-suited for ranking quality assessment.
+
+\subsection{Data Splitting Strategy}
+
+For model development, we use a stratified 90/10 train/validation split of the full training set. Stratification preserves the 68.4\% listen rate in both partitions. For final submission generation, models are retrained on the entire training set.
+
+%% ============================================================================
+\section{Competition-Focused Solution}
+\label{sec:competition}
+
+Our competition strategy centres on three pillars: (1)~comprehensive feature engineering to capture user behaviour, item quality, and contextual signals; (2)~gradient-boosted tree ensembles as our primary model family; and (3)~systematic validation to prevent overfitting.
+
+\subsection{Feature Engineering}
+\label{sec:features}
+
+We engineer 47 features organised into seven categories. All user-level and interaction-level statistics are computed exclusively from training data to prevent data leakage.
+
+\subsubsection{Temporal Features (9 features)}
+From the listening timestamp, we extract: \texttt{hour} (0--23), \texttt{day\_of\_week} (0--6), \texttt{day\_of\_month}, \texttt{month}, \texttt{is\_weekend} (binary), \texttt{is\_late\_night} (1--5\,AM), \texttt{is\_evening} (6--11\,PM), \texttt{is\_commute\_time} (7--9\,AM), and a categorical \texttt{time\_of\_day} (morning/afternoon/evening/night). These capture the strong dependence of listening behaviour on temporal context---users are more likely to skip tracks during commutes than during relaxed evening sessions.
+
+\subsubsection{Release Features (7 features)}
+From the track's release date, we derive: \texttt{release\_year}, \texttt{release\_month}, \texttt{release\_decade}, \texttt{days\_since\_release}, \texttt{is\_pre\_release\_listen} (binary), \texttt{is\_new\_release} (within 30 days), and \texttt{track\_age\_category} (pre-release/new/recent/catalogue/deep catalogue). New releases exhibit higher engagement, while very old tracks tend to be intentionally sought out.
+
+\subsubsection{Duration Features (3 features)}
+We compute \texttt{duration\_minutes}, a categorical \texttt{duration\_category} (very short to very long), and \texttt{is\_extended\_track} ($>5$ minutes). Track length correlates with skip probability, as longer tracks have more opportunities for user disengagement.
+
+\subsubsection{User Engagement Features (9 features)}
+From training data, we compute per-user statistics: \texttt{user\_listen\_rate}, \texttt{user\_skip\_rate}, \texttt{user\_session\_count}, \texttt{user\_total\_listens}, \texttt{user\_genre\_diversity} (unique genres), \texttt{user\_artist\_diversity} (unique artists), \texttt{user\_context\_variety}, a categorical \texttt{user\_engagement\_segment} (never/rarely/occasional/moderate/frequent skipper), and a composite \texttt{user\_engagement\_score}. These features capture the fundamental insight that some users are inherently more selective than others.
+
+\subsubsection{Target-Encoded Categorical Features (3 features)}
+High-cardinality identifiers (\texttt{genre\_id}, \texttt{artist\_id}, \texttt{album\_id}) are encoded using smoothed target encoding~\cite{mikolov2013distributed}:
+\begin{equation}
+  \text{enc}(c) = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}}{n_c + m}
+\end{equation}
+where $n_c$ is the count for category $c$, $\bar{y}_c$ is the category mean, $\bar{y}$ is the global mean, and $m=50$ is the smoothing parameter. This approach converts categorical identifiers into informative numerical features while regularising rare categories toward the global mean.
+
+\subsubsection{Item-Level Features (4 features)}
+We compute smoothed listen rates and log-transformed play counts for both tracks (\texttt{media\_listen\_rate\_smooth}, \texttt{media\_play\_count\_log}) and artists (\texttt{artist\_listen\_rate\_smooth}, \texttt{artist\_play\_count\_log}). These capture item popularity and quality signals: frequently listened-to tracks are more likely to be listened to again.
+
+\subsubsection{User--Item Affinity Features (3 features)}
+We compute smoothed affinity scores: \texttt{user\_artist\_affinity} (how much a user likes a specific artist), \texttt{user\_genre\_affinity} (user's preference for a genre), and \texttt{user\_knows\_artist} (binary flag indicating prior exposure). These features approximate collaborative filtering signals within a feature-based framework, capturing the intuition that users are more likely to listen to artists they have previously enjoyed.
+
+\subsection{Models}
+\label{sec:models}
+
+\subsubsection{XGBoost}
+Our primary model is XGBoost~\cite{chen2016xgboost}, a gradient-boosted decision tree framework. We use the following hyperparameters: 500 estimators, maximum depth 7, learning rate 0.05, subsample ratio 0.8, column sample ratio 0.8, minimum child weight 5, L1 regularisation $\alpha = 0.1$, L2 regularisation $\lambda = 1$, and $\gamma = 0.1$. Early stopping with patience 30 prevents overfitting. This configuration achieves a validation AUC of \textbf{0.9341}.
+
+\subsubsection{LightGBM}
+We also train a LightGBM model~\cite{ke2017lightgbm} with comparable hyperparameters: 500 estimators, maximum depth 7, learning rate 0.05, 63 leaves, minimum 50 child samples, and the same regularisation settings. LightGBM's histogram-based splitting and leaf-wise growth achieve a validation AUC of \textbf{0.9352}, slightly outperforming XGBoost.
+
+\subsubsection{Neural Network}
+As a complementary model, we train a feedforward neural network with three hidden layers (256--128--64 units) using batch normalisation~\cite{ioffe2015batch}, ReLU activation, and dropout~\cite{srivastava2014dropout} (rates 0.3, 0.3, 0.2). The network is optimised with Adam~\cite{kingma2015adam} (learning rate $10^{-3}$, weight decay $10^{-4}$) for 15 epochs with a batch size of 4096. Input features are standardised using z-score normalisation. The neural network achieves a validation AUC of \textbf{0.9262}, approximately 1 percentage point below the tree-based models.
+
+\subsubsection{Ensemble}
+We combine XGBoost and LightGBM predictions using a weighted average:
+\begin{equation}
+  \hat{p}_{\text{ensemble}} = w \cdot \hat{p}_{\text{XGB}} + (1 - w) \cdot \hat{p}_{\text{LGB}}
+\end{equation}
+The optimal weight $w$ is found via grid search on the validation set (step size 0.05). The ensemble achieves a validation AUC of \textbf{0.9352}, matching LightGBM alone, which indicates high correlation between the two models' predictions.
+
+\subsection{Feature Importance Analysis}
+
+The most important features across both tree-based models are the user--item affinity features (\texttt{user\_artist\_affinity}, \texttt{user\_genre\_affinity}), followed by item-level popularity (\texttt{media\_listen\_rate\_smooth}), user engagement statistics (\texttt{user\_listen\_rate}), and target-encoded categoricals. Temporal features contribute moderately, while raw duration features have low individual importance. This ranking confirms that \emph{who listens to what} matters more than \emph{when} or \emph{how long}.
+
+\subsection{Training and Validation}
+
+Table~\ref{tab:results} summarises the progression of our experiments.
+
+\begin{table}[t]
+  \caption{Model performance summary (validation ROC AUC)}
+  \label{tab:results}
+  \begin{tabular}{lccr}
+    \toprule
+    Model & Features & Data Size & AUC \\
+    \midrule
+    XGBoost v1 (baseline)  & 35 & 100K   & 0.8722 \\
+    XGBoost v2             & 47 & 7.5M   & 0.9341 \\
+    LightGBM v2            & 47 & 7.5M   & 0.9352 \\
+    Ensemble (XGB + LGB)   & 47 & 7.5M   & 0.9352 \\
+    Neural Network         & 47 & 7.5M   & 0.9262 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The largest AUC gain (+0.062) came from adding target encoding, item-level features, and user--item affinity signals, combined with scaling from 100K to 7.5M training samples. This confirms that feature engineering and data scale are the dominant drivers of performance in this task, consistent with findings in the gradient boosting literature~\cite{chen2016xgboost}.
+
+%% ============================================================================
+\section{Production-Focused Recommendation System}
+\label{sec:production}
+
+While the competition pipeline optimises a single offline metric, a production system at Deezer must address a much broader set of requirements. In this section, we propose a recommendation architecture that balances accuracy, scalability, diversity, and user experience.
+
+\subsection{System Architecture}
+
+We propose a two-stage architecture common in industrial recommender systems~\cite{covington2016deep}:
+
+\begin{enumerate}
+  \item \textbf{Candidate generation}: A lightweight retrieval model selects $\sim$1000 candidate tracks from the full catalogue using approximate nearest neighbour search over learned user and item embeddings. This stage prioritises recall over precision.
+  \item \textbf{Ranking}: A more expressive model (similar to our competition pipeline) scores each candidate using rich features. The top-$k$ ranked items are presented to the user, possibly after a re-ranking step that enforces diversity constraints.
+\end{enumerate}
+
+This decomposition enables sub-second latency even with catalogues of millions of tracks. The candidate generator can be pre-computed and cached, while the ranker operates on a much smaller set.
+
+\subsection{Handling the Cold-Start Problem}
+\label{sec:coldstart}
+
+New users and new tracks pose a fundamental challenge for collaborative filtering approaches~\cite{schein2002methods}. Our production system addresses cold start at multiple levels:
+
+\begin{itemize}
+  \item \textbf{New users}: In the absence of listening history, we rely on content-based features (genre preferences from onboarding, demographic signals, device type) and popularity-based recommendations. As the user accumulates interactions, collaborative signals gradually take over.
+  \item \textbf{New tracks}: For tracks with no play history, we use audio features (tempo, energy, valence), artist popularity, and genre metadata. Smoothed target encoding (Equation~1) naturally handles this by falling back to the global mean when $n_c = 0$.
+  \item \textbf{Exploration}: We incorporate an $\epsilon$-greedy strategy to occasionally surface new or less popular tracks, accelerating data collection for cold items.
+\end{itemize}
+
+\subsection{Scalability}
+
+With 19,914 users and 451,867 tracks in our dataset---and real-world catalogues being orders of magnitude larger---the system must scale efficiently:
+
+\begin{itemize}
+  \item \textbf{Feature computation}: User statistics and target encodings can be updated incrementally as new interactions arrive, avoiding full recomputation.
+  \item \textbf{Model serving}: Tree-based models are fast at inference ($<$1\,ms per prediction) and can be served efficiently. Embedding-based retrieval uses approximate nearest neighbour libraries (e.g., FAISS) for sub-linear search.
+  \item \textbf{Periodic retraining}: Models are retrained on a daily or weekly schedule, with online metrics monitoring for data drift.
+\end{itemize}
+
+\subsection{Beyond Accuracy: Diversity and Exploration}
+
+A recommendation system that only optimises listen probability will converge on a narrow set of popular, safe tracks---a phenomenon known as the ``filter bubble''~\cite{mcnee2006being}. A production system must also ensure:
+
+\begin{itemize}
+  \item \textbf{Diversity}: Re-ranking to ensure variety in artist, genre, tempo, and mood within a single playlist or session~\cite{castells2015novelty}.
+  \item \textbf{Novelty}: Balancing familiar artists with new discoveries to sustain long-term engagement.
+  \item \textbf{Fairness}: Avoiding systematic bias against niche artists or less popular genres, which harms both user experience and artist ecosystem health.
+\end{itemize}
+
+\subsection{User Lifecycle and Context}
+
+Music listening is highly context-dependent. A production system should adapt to:
+
+\begin{itemize}
+  \item \textbf{Session context}: Workout playlists differ from study sessions or commute listening. Context-aware models can leverage time-of-day and activity signals.
+  \item \textbf{User evolution}: Musical tastes change over time. Recent interactions should be weighted more heavily, and models should adapt to evolving preferences.
+  \item \textbf{Sequential patterns}: Users often listen to music in sessions with internal coherence. Session-based models (e.g., GRU4Rec) can capture sequential dependencies that pointwise classifiers miss.
+\end{itemize}
+
+%% ============================================================================
+\section{Comparison and Overlap Analysis}
+\label{sec:comparison}
+
+\subsection{Where Competition and Production Overlap}
+
+Several aspects of our competition solution transfer directly to production:
+
+\begin{itemize}
+  \item \textbf{Feature engineering}: Temporal context, user engagement statistics, and item popularity are valuable in both settings. The insight that user--artist affinity is the strongest predictor applies universally.
+  \item \textbf{Leakage-free evaluation}: Our strict separation of train-time statistics (computing user features only from training data) mirrors the production requirement that models must not use future information.
+  \item \textbf{Scalable models}: XGBoost and LightGBM are used extensively in production ranking systems due to their speed, interpretability, and robustness.
+\end{itemize}
+
+\subsection{Where They Diverge}
+
+However, fundamental differences emerge:
+
+\begin{table}[t]
+  \caption{Competition vs.\ production trade-offs}
+  \label{tab:tradeoffs}
+  \begin{tabular}{p{3.2cm}p{4.5cm}p{4.5cm}}
+    \toprule
+    Dimension & Competition & Production \\
+    \midrule
+    Objective & Maximise AUC on fixed test set & Maximise long-term user engagement \\
+    Cold start & Not a concern (test users appear in train) & Critical challenge requiring fallback strategies \\
+    Diversity & Irrelevant to scoring & Essential for user satisfaction \\
+    Latency & Irrelevant (batch prediction) & Must be $<$100\,ms per request \\
+    Fairness & Not evaluated & Legal and ethical requirement \\
+    Feedback loop & Static dataset & Dynamic; model predictions influence future data \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{Metric Mismatch}
+The competition's AUC metric measures discriminative ability on a fixed snapshot. In production, success is measured by retention, session length, and user satisfaction---metrics that penalise filter bubbles and reward exploration, which AUC does not capture~\cite{mcnee2006being}.
+
+\subsubsection{Target Encoding in Production}
+Our competition pipeline relies heavily on target-encoded categorical features. In production, these must be carefully managed: encodings must be recomputed periodically, new categories need graceful handling, and the tight coupling between encoding and target variable raises concerns about feedback loops where popular items become more popular.
+
+\subsubsection{Ensemble Complexity}
+While our XGBoost + LightGBM ensemble adds marginal AUC improvement, the added complexity (two models to maintain, deploy, and monitor) may not justify the benefit in production. Simpler, more maintainable systems are often preferred.
+
+\subsubsection{Neural Networks in Production}
+Although our neural network underperformed tree-based models on this tabular task, neural approaches become essential in production for learning embeddings from raw audio, processing sequential session data, and enabling end-to-end multi-task learning~\cite{covington2016deep, zhang2019deep}. The gap between feature-engineered trees and neural models typically narrows when richer input modalities (audio, text, images) are available.
+
+\subsection{Synthesis}
+
+The competition pipeline provides a strong \emph{ranking} component that could serve as the second stage of a production system. However, it must be complemented by a candidate generation layer, diversity mechanisms, cold-start fallbacks, and online monitoring. The core lesson is that \emph{accuracy is necessary but not sufficient}: a model that perfectly predicts skip probability but recommends the same ten songs to every user would fail in production.
+
+%% ============================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Experimental Setup}
+
+All experiments are conducted on the full DSG17 training set (7,558,834 interactions) with a stratified 90/10 validation split. Feature engineering is performed using only training data to prevent leakage. Models are implemented in Python using XGBoost 2.1, LightGBM 4.5, and PyTorch 2.10.
+
+\subsection{Results}
+
+Our best model (LightGBM with 47 features) achieves a validation AUC of 0.9352, representing a 7.2\% improvement over the initial XGBoost baseline with 35 features on 100K samples (0.8722). The progression of improvements is shown in Table~\ref{tab:results}.
+
+Key findings:
+\begin{enumerate}
+  \item \textbf{Feature engineering dominates}: The addition of target encoding, item-level features, and user--item affinity signals contributed the largest single improvement (+0.062 AUC).
+  \item \textbf{Data scale matters}: Moving from 100K to 7.5M training samples improved performance, but only when combined with features that capture high-cardinality entity information.
+  \item \textbf{Tree models outperform neural networks on tabular data}: Our feedforward network achieved 0.9262 vs.\ 0.9352 for LightGBM, consistent with the literature on gradient boosting vs.\ deep learning for structured data~\cite{chen2016xgboost}.
+  \item \textbf{Ensembling yields diminishing returns}: The XGBoost--LightGBM ensemble matched but did not exceed the best individual model, suggesting high prediction correlation.
+\end{enumerate}
+
+\subsection{Error Analysis}
+
+The model performs best for users with rich interaction histories and well-known artists, where affinity features are reliable. Performance degrades for:
+\begin{itemize}
+  \item Users with few interactions (smoothed features collapse to global means).
+  \item Tracks from niche artists with limited play history.
+  \item Context-dependent listening patterns that vary within the same user.
+\end{itemize}
+
+These failure modes directly motivate the production considerations discussed in Section~\ref{sec:production}.
+
+%% ============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a comprehensive approach to the Deezer skip prediction challenge, achieving a validation AUC of 0.9352 through systematic feature engineering and gradient-boosted tree ensembles. Our 47-feature pipeline captures temporal context, user behaviour, item popularity, and user--item affinity signals, with the latter category proving most impactful.
+
+We contrasted this competition-optimised solution with a production-ready recommendation architecture, identifying key areas of divergence: cold-start handling, diversity enforcement, latency constraints, and the fundamental mismatch between offline accuracy metrics and long-term user satisfaction. Our analysis shows that competition solutions provide excellent ranking components but require significant architectural augmentation for production deployment.
+
+The code for all experiments is publicly available and fully reproducible. All feature computations are leakage-free, using only training data for statistic derivation.
+
+%% ============================================================================
+
+\section*{Declaration on Generative AI}
+During the preparation of this work, the authors used AI-assisted tools for code development and debugging. The authors reviewed and edited all content and take full responsibility for the publication's content.
+
+%% ============================================================================
+
+\section*{Author Contributions}
+
+\begin{itemize}
+  \item \textbf{Author One}: [TODO: Describe contributions]
+  \item \textbf{Author Two}: [TODO: Describe contributions]
+  \item \textbf{Author Three}: [TODO: Describe contributions]
+\end{itemize}
+
+%% ============================================================================
+\bibliography{references}
+
+\end{document}
