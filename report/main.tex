@@ -31,13 +31,14 @@ email=xinmeng.song@stud.hslu.ch,
 
 %%
 \begin{abstract}
-We address the Deezer skip prediction task from the 2017 Data Science Game, where the goal is to predict whether a user will listen to or skip the first track recommended by Deezer's Flow feature. We frame this as a binary classification problem evaluated by ROC AUC. Through exploratory data analysis, we uncover temporal inconsistencies affecting 0.45\% of records and identify five distinct user engagement segments that strongly predict skip behaviour. Our competition-focused pipeline engineers 47 features spanning temporal context, release metadata, user engagement statistics, target-encoded categorical variables, item popularity, and user-item affinity signals. An ensemble of XGBoost and LightGBM achieves a cross-validation AUC of 0.935 on a random training split, though we critically examine why this substantially exceeds the winning competition score of 0.686, identifying evaluation methodology as the key differentiator. We then contrast this competition solution with a production-grade recommendation architecture for Deezer, and analyse where competition-driven and production-driven approaches overlap and diverge.
+We address the Deezer skip prediction task from the 2017 Data Science Game, predicting whether a user will listen to or skip the first track recommended by Deezer's Flow feature. Our approach compares feature-based classification, implicit matrix factorisation (ALS), and a hybrid combining MF embeddings with gradient-boosted trees. Crucially, we compare random and temporal validation: a na\"ive random split yields 0.758 AUC, but a temporal split---which mirrors the competition's test distribution---produces 0.686 AUC, matching the competition winner. An ablation study reveals that user--item affinity features, while dominant on random splits, \emph{degrade} temporal performance by 5 percentage points. Pure ALS achieves only 0.520, and MF embeddings do not improve the hybrid model, demonstrating that skip prediction is fundamentally a contextual classification problem rather than a preference estimation task. We contrast this solution with a production architecture and analyse where competition and production approaches overlap and diverge.
 \end{abstract}
 
 \begin{keywords}
   recommender systems \sep
   music recommendation \sep
   skip prediction \sep
+  collaborative filtering \sep
   gradient boosting \sep
   feature engineering
 \end{keywords}
@@ -48,284 +49,258 @@ We address the Deezer skip prediction task from the 2017 Data Science Game, wher
 \section{Introduction}
 \label{sec:intro}
 
-Music streaming platforms such as Deezer serve hundreds of millions of tracks to users with diverse tastes and listening contexts. Deezer's \emph{Flow} feature provides a personalised, infinite stream of music---a mix of familiar favourites and new discoveries. Predicting whether a user will engage with (listen to) or reject (skip) a Flow recommendation is central to improving this experience~\cite{schedl2018current}.
+Music streaming platforms such as Deezer serve hundreds of millions of tracks to users with diverse tastes. Deezer's \emph{Flow} feature provides a personalised, infinite stream of music---a mix of familiar favourites and new discoveries. Predicting whether a user will engage with (listen to) or reject (skip) a Flow recommendation is central to improving this experience~\cite{schedl2018current}.
 
-The Deezer Data Science Game 2017 (DSG17) formalises this as a binary classification task: given a user's one-month listening history, predict whether they will listen to or skip the first track Flow recommends~\cite{deezer2017dsg}. A track is considered ``listened'' if the user hears more than 30 seconds of it (\texttt{is\_listened}~=~1); pressing skip before 30 seconds yields \texttt{is\_listened}~=~0. The competition attracted strong international participation, with the winning team (``lebed i 3 raka'', MSU Russia) achieving a test AUC of 0.686.
+The Deezer Data Science Game 2017 (DSG17) formalises this as binary classification: given a user's one-month listening history, predict whether they will listen to or skip the first track Flow recommends~\cite{deezer2017dsg}. A track is ``listened'' if the user hears more than 30 seconds (\texttt{is\_listened}~=~1); pressing skip before 30 seconds yields \texttt{is\_listened}~=~0. The winning team achieved a test AUC of 0.686.
 
-In this report, we pursue three objectives aligned with the course requirements. First, we develop a competition-focused solution that maximises AUC through feature engineering and model ensembling (\textbf{Q1}, Section~\ref{sec:competition}). Second, we propose a production-grade recommendation system for Deezer's broader needs (\textbf{Q2}, Section~\ref{sec:production}). Third, we critically compare these two perspectives (\textbf{Q3}, Section~\ref{sec:comparison}). We begin with an exploratory data analysis (Section~\ref{sec:eda}) that informed our feature engineering decisions.
+We pursue three objectives. First, we develop a competition-focused solution (\textbf{Q1}, Section~\ref{sec:competition}). Second, we propose a production-grade recommendation system (\textbf{Q2}, Section~\ref{sec:production}). Third, we critically compare these perspectives (\textbf{Q3}, Section~\ref{sec:comparison}). Our key contribution is demonstrating---through temporal validation and ablation analysis---that evaluation methodology fundamentally determines reported performance, and that features which appear dominant under convenient splits can actively harm generalisation.
 
 %% ============================================================================
-\section{Dataset and Problem Setup}
+\section{Dataset and Exploratory Analysis}
 \label{sec:data}
 
 \subsection{Dataset Description}
 
-The training set contains 7,558,834 interactions from 19,914 users across 451,867 tracks, representing one month of listening history. Each record includes 15 features: user and item identifiers (\texttt{user\_id}, \texttt{media\_id}, \texttt{artist\_id}, \texttt{album\_id}, \texttt{genre\_id}), a Unix timestamp (\texttt{ts\_listen}), track release date, song duration (\texttt{media\_duration}), platform and context metadata (\texttt{platform\_name}, \texttt{platform\_family}, \texttt{listen\_type}, \texttt{user\_gender}, \texttt{user\_age}, \texttt{context\_type}), and the binary target \texttt{is\_listened}. The dataset has no missing values and no duplicate rows---a data completeness rate of 100\%.
+The training set contains 7,558,834 interactions from 19,914 users across 451,867 tracks, representing one month of listening history. Each record includes 15 features: user and item identifiers (\texttt{user\_id}, \texttt{media\_id}, \texttt{artist\_id}, \texttt{album\_id}, \texttt{genre\_id}), a Unix timestamp (\texttt{ts\_listen}), track release date, song duration (\texttt{media\_duration}), platform and context metadata (\texttt{platform\_name}, \texttt{platform\_family}, \texttt{listen\_type}, \texttt{user\_gender}, \texttt{user\_age}, \texttt{context\_type}), and the binary target \texttt{is\_listened}. The dataset has 100\% completeness (no missing values) and zero duplicate rows.
 
-The test set contains exactly 19,918 rows---approximately one row per user---each representing the \emph{first track Flow recommended} to that user. This is a fundamentally different distribution from training: the training data captures general listening behaviour across many tracks per user, while the test set captures a single, curated recommendation event per user.
+The test set contains 19,918 rows---one per user---each representing the \emph{first track Flow recommended}. This structural difference is critical: the training data captures general listening behaviour (many tracks per user), while the test set captures a single, algorithmically curated recommendation event per user.
 
-\subsection{Problem Formulation}
+\subsection{Target Distribution and User Segmentation}
 
-Given a user $u$, a track $t$, and contextual features $\mathbf{c}$, we predict $P(\text{is\_listened} = 1 \mid u, t, \mathbf{c})$. Predictions are evaluated using ROC AUC. The key challenge lies in generalising from broad listening history (training) to the specific context of a Flow recommendation (test).
-
-%% ============================================================================
-\section{Exploratory Data Analysis}
-\label{sec:eda}
-
-Before modelling, we conducted a thorough exploratory analysis to understand the data characteristics and inform feature engineering decisions.
-
-\subsection{Target Variable Distribution}
-
-The target variable exhibits a moderate class imbalance: 68.4\% of interactions are listens (\texttt{is\_listened}~=~1) and 31.6\% are skips (\texttt{is\_listened}~=~0), yielding an imbalance ratio of 0.46:1. This imbalance is not severe enough to require resampling techniques, but it does mean that a naive majority-class baseline would achieve 68.4\% accuracy---making AUC a more informative metric than raw accuracy.
-
-\subsection{User Behaviour Segmentation}
-
-We computed per-user skip rates from the training data and identified five distinct user engagement segments, shown in Table~\ref{tab:segments}. This segmentation reveals that skip behaviour is strongly user-dependent: 6.8\% of users almost never skip, while 26.9\% skip more than half of all tracks. This variance motivates our \texttt{user\_listen\_rate} and \texttt{user\_engagement\_segment} features, which proved to be among the strongest predictors.
+The target exhibits moderate class imbalance: 68.4\% listens vs.\ 31.6\% skips (ratio 0.46:1). We identified five distinct user segments from per-user skip rates (Table~\ref{tab:segments}), ranging from users who almost never skip (6.8\%) to frequent skippers (26.9\%).
 
 \begin{table}[t]
   \caption{User engagement segments based on training set skip rates}
   \label{tab:segments}
   \begin{tabular}{lrrr}
     \toprule
-    Segment & Users (\%) & Skip Rate & Avg.\ Sessions \\
+    Segment & Users (\%) & Skip Rate & Avg.\ Age \\
     \midrule
-    Never Skip ($<$1\%)     &  6.8\% & $<$1\%    & 118 \\
-    Rarely Skip (1--10\%)   & 12.5\% & 1--10\%   & 110 \\
-    Occasional (10--25\%)   & 23.1\% & 10--25\%  & 105 \\
-    Moderate (25--50\%)     & 30.7\% & 25--50\%  &  98 \\
-    Frequent ($>$50\%)      & 26.9\% & $>$50\%   &  91 \\
+    Never Skip ($<$1\%)     &  6.8\% & $<$1\%    & 25.0 \\
+    Rarely Skip (1--10\%)   & 12.5\% & 1--10\%   & 24.8 \\
+    Occasional (10--25\%)   & 23.1\% & 10--25\%  & 24.1 \\
+    Moderate (25--50\%)     & 30.7\% & 25--50\%  & 23.6 \\
+    Frequent ($>$50\%)      & 26.9\% & $>$50\%   & 23.3 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-Demographic analysis revealed statistically significant differences between segments. Engaged users (skip rate $<$10\%) are on average older (25.0 years) than frequent skippers (23.3 years, $p < 0.001$) and have more listening sessions (110 vs.\ 91, $p < 0.001$). Interestingly, genre diversity does not differ significantly between segments ($p = 0.545$), suggesting that selective users are not simply less curious---they are more discerning across a similar breadth of music.
+Figure~\ref{fig:skip_behavior} visualises this segmentation. Engaged users ($<$10\% skip rate) are significantly older (25.0 vs.\ 23.3 years, $p < 0.001$) and have more sessions (110 vs.\ 91, $p < 0.001$) than frequent skippers, but genre diversity does not differ ($p = 0.545$)---selective users are discerning across similar musical breadth.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/user_skip_behavior}
+  \caption{User skip behaviour analysis. Top left: segment sizes. Top right: skip rate distribution. Bottom: age and session count comparison between engaged and frequent skippers.}
+  \label{fig:skip_behavior}
+\end{figure}
+
+\subsection{Temporal Patterns and Data Quality}
+
+Listen rates peak at 2--4\,AM (0.77) when only dedicated listeners are active, and drop to 0.63 around 10--11\,PM during casual browsing (Figure~\ref{fig:temporal}). Weekend listening (particularly Saturday) shows slightly higher engagement than weekdays. These patterns motivated our temporal feature engineering.
 
 \subsection{Temporal Consistency Issues}
-\label{sec:temporal}
 
-A critical finding from our analysis was that 0.45\% of records (${\approx}$34,000 interactions) exhibit temporal inconsistencies where the listening timestamp precedes the track's release date---i.e., users apparently listened to tracks before they were officially released.
+We discovered that 0.45\% of records (${\approx}$34,000) exhibit pre-release listening---timestamps preceding the track's release date. Investigation revealed: 9.6\% were 1--7 days early (likely timezone differences), 70.3\% were 1 week to 1 month early (promotional access), 16.8\% were 1--3 months early (advance campaigns), and 2.7\% were over 1 year early (data entry errors or catalogue re-releases). The most extreme case was 17,081 days (47 years) before release. Rather than discarding these, we retained them and created a binary \texttt{is\_pre\_release\_listen} feature.
 
-We investigated the distribution of these pre-release intervals:
+\subsection{Catalogue Analysis}
 
-\begin{itemize}
-  \item \textbf{1--7 days early} (9.6\%): Likely caused by timezone mismatches between release dates (often midnight in the artist's home country) and listening timestamps (UTC or user-local time).
-  \item \textbf{1 week -- 1 month early} (70.3\%): Consistent with promotional early access, pre-release listening parties, or label-internal testing.
-  \item \textbf{1--3 months early} (16.8\%): Likely reflects advance promotional campaigns for major releases.
-  \item \textbf{Over 1 year early} (2.7\%): The most extreme case was 17,081 days (47 years) before release, indicating data entry errors or catalogue re-releases where the ``release date'' reflects a reissue rather than the original.
-\end{itemize}
+The track catalogue spans over a century (oldest release: 1912). We found that 55\% of listening involves deep catalogue tracks ($>$1 year old), while only 2\% are same-day listens of new releases. Track durations average 231 seconds (${\approx}$3.9 minutes) with a right-skewed distribution ranging from 1 to 2,822 seconds. These distributions informed our \texttt{track\_age\_category} and \texttt{duration\_category} features.
 
-\textbf{Decision}: Rather than discarding these records, we retained them and created a binary feature \texttt{is\_pre\_release\_listen} to flag this condition. The median pre-release interval was 21 days, suggesting most cases are legitimate promotional access rather than errors.
-
-\subsection{Catalogue and Content Analysis}
-
-The track catalogue spans over a century, with the oldest track released in 1912. We found that 55\% of listening involves tracks more than one year old (``deep catalogue''), while only 2\% of interactions are same-day listens of new releases. This long-tail distribution informed our \texttt{track\_age\_category} feature, which distinguishes pre-release, new ($<$30 days), recent (30 days -- 1 year), catalogue (1--5 years), and deep catalogue ($>$5 years) tracks.
-
-Track durations average 231 seconds (${\approx}$3.9 minutes), ranging from 1 second to 2,822 seconds (${\approx}$47 minutes). The distribution is right-skewed with a long tail of extended tracks, motivating the \texttt{duration\_category} and \texttt{is\_extended\_track} features.
-
-\subsection{Data Splitting Considerations}
-\label{sec:splitting}
-
-The choice of train/validation split strategy proved consequential. We considered two approaches:
-
-\begin{enumerate}
-  \item \textbf{Random stratified split} (used): A 90/10 random split preserving the class distribution. This is simple and gives high statistical power, but it allows information leakage through user and item overlap between train and validation sets.
-  \item \textbf{Temporal split} (recommended but not implemented): Splitting by timestamp, where the validation set consists of the most recent interactions. This better simulates the competition's test scenario (predicting future behaviour from past history) but requires careful handling of user-level features that must be recomputed for the training portion only.
-\end{enumerate}
-
-Our random split yielded validation AUCs around 0.935, far exceeding the competition winner's 0.686. As we discuss in Section~\ref{sec:validation_gap}, this gap is largely attributable to the evaluation methodology rather than model quality. A temporal split would likely produce validation scores closer to the true test performance and would have been a more honest evaluation strategy.
-
-\subsection{Summary of EDA Insights}
-
-Our exploratory analysis yielded three key insights that guided our modelling approach:
-\begin{enumerate}
-  \item \textbf{User identity dominates}: The user's baseline skip rate is the strongest predictor of behaviour. Any successful model must capture user-level engagement patterns.
-  \item \textbf{Temporal context matters}: Listening time (hour, day, weekend) correlates with skip behaviour, motivating extensive temporal feature engineering.
-  \item \textbf{Data quality is high}: With 100\% completeness and only 0.45\% temporal anomalies, the dataset required minimal cleaning, allowing us to focus effort on feature engineering rather than data repair.
-\end{enumerate}
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/temporal_patterns}
+  \caption{Listen rate by hour of day (left) and day of week (right). Late-night listeners are more engaged; weekends show slightly higher listen rates.}
+  \label{fig:temporal}
+\end{figure}
 
 %% ============================================================================
 \section{Q1: How Would We Win This Competition?}
 \label{sec:competition}
 
-If our sole objective were to maximise the Kaggle leaderboard score, our strategy would centre on three pillars: (1)~comprehensive feature engineering, (2)~strong gradient-boosted tree models, and (3)~rigorous validation that mirrors the test distribution.
-
-\subsection{Feature Engineering}
+\subsection{Feature Engineering (47 Features)}
 \label{sec:features}
 
-We engineer 47 features in seven categories. All user-level and interaction-level statistics are computed exclusively from training data to prevent data leakage.
+We engineer features in seven categories, computing all statistics from training data only to prevent leakage.
 
-\subsubsection{Temporal Features (9 features)}
-From the listening timestamp: \texttt{hour}, \texttt{day\_of\_week}, \texttt{day\_of\_month}, \texttt{month}, \texttt{is\_weekend}, \texttt{is\_late\_night} (1--5\,AM), \texttt{is\_evening} (6--11\,PM), \texttt{is\_commute\_time} (7--9\,AM), and \texttt{time\_of\_day} (categorical). Listening behaviour varies strongly with temporal context---users are more selective during commutes than evening relaxation.
+\textbf{Temporal (9 features)}: From the listening timestamp, we extract hour (0--23), day of week (0--6), day of month, month, and binary flags for weekend, late night (1--5\,AM), evening (6--11\,PM), commute time (7--9\,AM), plus a categorical time-of-day variable. As our EDA showed, listening behaviour varies strongly with temporal context.
 
-\subsubsection{Release Features (7 features)}
-From the track release date: \texttt{release\_year}, \texttt{release\_month}, \texttt{release\_decade}, \texttt{days\_since\_release}, \texttt{is\_pre\_release\_listen}, \texttt{is\_new\_release} (within 30 days), and \texttt{track\_age\_category}. As our EDA showed, new releases exhibit higher engagement, while deep catalogue tracks tend to be intentionally sought out.
+\textbf{Release (7 features)}: From the track release date: year, month, decade, days since release, pre-release listen flag, new release flag (within 30 days), and a track age category (pre-release/new/recent/catalogue/deep catalogue). New releases exhibit higher engagement, while deep catalogue tracks tend to be intentionally sought out.
 
-\subsubsection{Duration Features (3 features)}
-\texttt{duration\_minutes}, categorical \texttt{duration\_category}, and \texttt{is\_extended\_track} ($>$5 minutes). Track length correlates with skip probability, as longer tracks present more opportunities for disengagement.
+\textbf{Duration (3 features)}: Duration in minutes, a categorical duration variable (very short to very long), and an extended track flag ($>$5 minutes). Track length correlates with skip probability.
 
-\subsubsection{User Engagement Features (9 features)}
-Per-user statistics from training data: \texttt{user\_listen\_rate}, \texttt{user\_skip\_rate}, \texttt{user\_session\_count}, \texttt{user\_total\_listens}, \texttt{user\_genre\_diversity}, \texttt{user\_artist\_diversity}, \texttt{user\_context\_variety}, \texttt{user\_engagement\_segment}, and \texttt{user\_engagement\_score}. These features operationalise the EDA finding that user identity is the dominant predictor of skip behaviour.
+\textbf{User engagement (9 features)}: Per-user statistics computed from training data only: listen rate, skip rate, session count, total listens, genre diversity (unique genres), artist diversity (unique artists), context variety, engagement segment, and a composite engagement score. These operationalise our EDA finding that user identity is the dominant predictor.
 
-\subsubsection{Target-Encoded Categoricals (3 features)}
-High-cardinality identifiers (\texttt{genre\_id}, \texttt{artist\_id}, \texttt{album\_id}) are encoded using smoothed target encoding:
+\textbf{Target encoding (3 features)}: High-cardinality identifiers (\texttt{genre\_id}, \texttt{artist\_id}, \texttt{album\_id}) are encoded using smoothed target encoding:
 \begin{equation}
-  \text{enc}(c) = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}}{n_c + m}
+  \text{enc}(c) = \frac{n_c \cdot \bar{y}_c + m \cdot \bar{y}}{n_c + m}, \quad m = 50
 \end{equation}
-where $n_c$ is the category count, $\bar{y}_c$ the category mean, $\bar{y}$ the global mean, and $m=50$ the smoothing parameter. This converts identifiers into informative numerical features while regularising rare categories toward the global mean, addressing the long-tail distribution observed in our EDA.
+\textbf{Item-level (4 features)}: Smoothed listen rates and log-transformed play counts for both tracks (\texttt{media\_listen\_rate\_smooth}, \texttt{media\_play\_count\_log}) and artists (\texttt{artist\_listen\_rate\_smooth}, \texttt{artist\_play\_count\_log}). The log transformation addresses the heavy right-skew in play counts.
 
-\subsubsection{Item-Level Features (4 features)}
-Smoothed listen rates and log-transformed play counts for tracks (\texttt{media\_listen\_rate\_smooth}, \texttt{media\_play\_count\_log}) and artists (\texttt{artist\_listen\_rate\_smooth}, \texttt{artist\_play\_count\_log}). The log transformation addresses the heavy right-skew in play counts observed during EDA.
+\textbf{User--item affinity (3 features)}: \texttt{user\_artist\_affinity} (smoothed user-specific artist listen rate), \texttt{user\_genre\_affinity} (user-specific genre listen rate), and \texttt{user\_knows\_artist} (binary prior-exposure flag). These approximate collaborative filtering within a feature-based framework. As our ablation study reveals (Section~\ref{sec:ablation}), these features are powerful but dangerously prone to overfitting.
 
-\subsubsection{User--Item Affinity Features (3 features)}
-\texttt{user\_artist\_affinity} (smoothed user-specific artist listen rate), \texttt{user\_genre\_affinity} (user-specific genre listen rate), and \texttt{user\_knows\_artist} (binary prior exposure flag). These approximate collaborative filtering signals within a feature-based framework, capturing the intuition that users are more likely to listen to artists they have previously enjoyed.
+\subsection{Models}
 
-\subsection{Model Selection}
+\textbf{Implicit ALS}~\cite{koren2009matrix}: We train a matrix factorisation model using Alternating Least Squares on the user--item interaction matrix (19,008 users $\times$ 429,642 items), treating listen counts as confidence weights. We use 64 latent factors with $\lambda = 0.1$ regularisation for 15 iterations. This represents the canonical collaborative filtering approach.
 
-\subsubsection{XGBoost and LightGBM}
-Our primary models are XGBoost~\cite{chen2016xgboost} and LightGBM~\cite{ke2017lightgbm}, both gradient-boosted decision tree frameworks. Both use 500 estimators, max depth 7, learning rate 0.05, subsample 0.8, and L1/L2 regularisation. Early stopping with patience 30 prevents overfitting. These models are well-suited to tabular data with mixed feature types and can natively handle the non-linear interactions between user engagement patterns and contextual features.
+\textbf{XGBoost}~\cite{chen2016xgboost} and \textbf{LightGBM}~\cite{ke2017lightgbm}: Gradient-boosted trees with 500 estimators, max depth 7, learning rate 0.05, subsample 0.8, L1/L2 regularisation, early stopping (patience 30).
 
-\subsubsection{Neural Network}
-We also train a feedforward neural network (256--128--64 units) with batch normalisation~\cite{ioffe2015batch}, dropout~\cite{srivastava2014dropout} (rates 0.3, 0.3, 0.2), and Adam optimiser~\cite{kingma2015adam} ($\text{lr} = 10^{-3}$, weight decay $10^{-4}$). Input features are z-score normalised. Despite training on the same 47 features, the neural network underperforms tree-based models, consistent with empirical findings that gradient boosting dominates on structured tabular data.
+\textbf{Neural network}: Feedforward (256--128--64) with batch normalisation~\cite{ioffe2015batch}, dropout~\cite{srivastava2014dropout}, Adam~\cite{kingma2015adam}. Underperforms tree models by ${\approx}$1 pp on random splits, consistent with gradient boosting dominance on tabular data.
 
-\subsubsection{Ensemble}
-We combine XGBoost and LightGBM via weighted averaging: $\hat{p} = w \cdot \hat{p}_{\text{XGB}} + (1-w) \cdot \hat{p}_{\text{LGB}}$, with $w$ optimised by grid search (step 0.05) on the validation set.
+\textbf{Hybrid (XGBoost + MF embeddings)}: We extract 64-dimensional user and item embedding vectors from the trained ALS model and derive four features: dot product (primary CF signal), cosine similarity, user embedding norm, and item embedding norm. These are concatenated with the 47 engineered features, creating a 51-feature hybrid model that combines collaborative filtering with learning-to-rank.
 
-\subsection{Results and Comparison with Competition Winners}
+\subsection{Evaluation: Random vs.\ Temporal Validation}
+\label{sec:evaluation}
 
-Table~\ref{tab:results} summarises our model progression.
+The choice of validation strategy proved to be the most consequential decision in our pipeline.
+
+\subsubsection{Random Split (Na\"ive)}
+A stratified 90/10 random split yields XGBoost AUC of \textbf{0.758} when user statistics are properly computed from only the training portion. (An earlier pipeline that computed user statistics from \emph{all} data before splitting inflated this to 0.935---a cautionary example of subtle data leakage.)
+
+\subsubsection{Temporal Split (Realistic)}
+Splitting chronologically---training on the first 90\% of interactions by timestamp and validating on the last 10\%---produces AUC of \textbf{0.681}. The temporal validation set covers the final 5 days (26--30 November 2016), with 85.5\% user overlap but 20.1\% unseen items. Crucially, the validation listen rate (0.642) is lower than training (0.689), reflecting real distributional shift. This is dramatically closer to the competition winner's \textbf{0.686}, validating temporal split as the appropriate evaluation methodology.
+
+Figure~\ref{fig:pred_dist} shows the predicted probability distributions under random split evaluation, where the model achieves strong class separation. Under temporal evaluation, this separation degrades significantly, particularly for users encountering unfamiliar artists.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/prediction_distribution}
+  \caption{Distribution of predicted listen probabilities by actual outcome (random split, v1 model). Green: actual listens cluster near 1.0. Red: actual skips spread across lower values. This separation is weaker under temporal evaluation.}
+  \label{fig:pred_dist}
+\end{figure}
+
+Table~\ref{tab:results} compares all models under temporal evaluation.
 
 \begin{table}[t]
-  \caption{Model performance on a stratified 90/10 random split of the training data}
+  \caption{Model performance under temporal split evaluation}
   \label{tab:results}
-  \begin{tabular}{lccr}
+  \begin{tabular}{lr}
     \toprule
-    Model & Features & Data Size & Val AUC \\
+    Model & AUC \\
     \midrule
-    XGBoost v1 (baseline)  & 35 & 100K   & 0.872 \\
-    XGBoost v2             & 47 & 7.5M   & 0.934 \\
-    LightGBM v2            & 47 & 7.5M   & 0.935 \\
-    Ensemble (XGB + LGB)   & 47 & 7.5M   & 0.935 \\
-    Neural Network         & 47 & 7.5M   & 0.926 \\
+    Global mean baseline                  & 0.500 \\
+    Implicit ALS (64 factors)             & 0.520 \\
+    Per-item listen rate                  & 0.612 \\
+    XGBoost (47 feat.)                    & 0.686 \\
+    Hybrid: XGBoost + MF (51 feat.)       & 0.684 \\
+    Hybrid: no affinity + MF (50 feat.)   & 0.722 \\
+    Per-user listen rate                  & 0.728 \\
+    XGBoost (no affinity, 44 feat.)       & 0.736 \\
+    \textbf{Logistic Regression (47 feat.)}& \textbf{0.743} \\
     \midrule
-    \textit{Competition winner (test)} & \textit{?} & \textit{7.5M} & \textit{0.686} \\
+    \textit{Competition winner}           & \textit{0.686} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-The largest AUC gain (+0.062) came from the v1-to-v2 feature upgrade: adding target encoding, item-level features, and user--item affinity signals. Scaling from 100K to 7.5M training samples also helped, but only in combination with these richer features. The neural network trailed tree-based models by approximately 1 percentage point. Notably, the XGBoost--LightGBM ensemble matched but did not exceed the best individual model, indicating high prediction correlation between the two tree-based approaches.
+\subsubsection{Analysis of Results}
 
-\subsection{Feature Importance Analysis}
+Several striking findings emerge from this comparison:
 
-Feature importance rankings from both XGBoost and LightGBM consistently highlight user--item interaction features as the dominant predictors. Table~\ref{tab:importance} shows the top features.
+\textbf{ALS performs poorly (0.520).} Pure collaborative filtering barely exceeds random, despite being the canonical recommender systems technique. This makes sense: the task is not ``what should we recommend?'' but ``will this specific user skip this specific track in this specific context?''---a contextual prediction problem where latent factors capture preference but not intent.
+
+\textbf{XGBoost underperforms logistic regression.} Despite being more expressive, XGBoost (0.686) scores below logistic regression (0.743). As the ablation below shows, XGBoost overfits to user--item affinity features that do not generalise forward in time, while logistic regression's linear constraints provide natural regularisation.
+
+\textbf{MF embeddings do not help.} The hybrid model (0.684) performs comparably to base XGBoost (0.686). The ALS embeddings capture long-term preference patterns that are already approximated by our engineered affinity features---and suffer from the same temporal overfitting problem. Removing affinity features while keeping MF embeddings (0.722) confirms that the MF signal partially replaces affinity features but does not fully solve the generalisation problem.
+
+\textbf{The simplest user-level baseline is remarkably strong.} Per-user listen rate alone (0.728) outperforms all complex models except logistic regression. This underscores our EDA finding that user identity is the dominant predictor of skip behaviour.
+
+\subsection{Feature Ablation Study}
+\label{sec:ablation}
+
+To quantify which feature groups \emph{actually matter} for temporal generalisation, we removed each group and retrained XGBoost. Table~\ref{tab:ablation} shows the results, sorted by impact.
 
 \begin{table}[t]
-  \caption{Top 10 features by importance (LightGBM, gain-based)}
-  \label{tab:importance}
-  \begin{tabular}{clr}
+  \caption{Feature ablation under temporal split (full model AUC = 0.681)}
+  \label{tab:ablation}
+  \begin{tabular}{lrrr}
     \toprule
-    Rank & Feature & Category \\
+    Feature Group Removed & $n$ & AUC & $\Delta$ \\
     \midrule
-    1  & \texttt{user\_artist\_affinity}       & User--Item \\
-    2  & \texttt{user\_genre\_affinity}        & User--Item \\
-    3  & \texttt{media\_listen\_rate\_smooth}   & Item-Level \\
-    4  & \texttt{user\_listen\_rate}           & User Engagement \\
-    5  & \texttt{artist\_id\_target\_enc}      & Target Encoding \\
-    6  & \texttt{user\_engagement\_score}      & User Engagement \\
-    7  & \texttt{artist\_listen\_rate\_smooth}  & Item-Level \\
-    8  & \texttt{genre\_id\_target\_enc}       & Target Encoding \\
-    9  & \texttt{hour}                         & Temporal \\
-    10 & \texttt{album\_id\_target\_enc}       & Target Encoding \\
+    User--Item Affinity    & 3  & 0.732 & \textbf{+0.051} \\
+    Temporal               & 9  & 0.692 & +0.011 \\
+    User Engagement        & 9  & 0.691 & +0.009 \\
+    Duration               & 3  & 0.686 & +0.005 \\
+    Item-Level             & 4  & 0.685 & +0.004 \\
+    Release                & 7  & 0.682 & +0.001 \\
+    Target Encoding        & 3  & 0.682 & +0.001 \\
+    \midrule
+    \textit{None (full model)} & \textit{47} & \textit{0.681} & --- \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-This ranking reveals a clear hierarchy: \emph{who listens to what} (affinity features, ranks 1--2) dominates over \emph{what is popular} (item features, ranks 3, 7) and \emph{who is the user} (engagement, ranks 4, 6), which in turn dominate \emph{when} (temporal, rank 9) and \emph{how long} (duration features, not in top 10). Raw duration and release features contribute modestly, while their derived variants (e.g., \texttt{track\_age\_category}) provide more signal through non-linear binning that tree models can exploit.
+The most important finding: \textbf{removing user--item affinity features improves AUC by 5.1 percentage points} (from 0.681 to 0.732). These features---which dominate random-split importance rankings---overfit to historical user-artist interactions that do not predict future behaviour under distributional shift. The model learns to rely on ``this user liked this artist before'' signals that break when the test context involves new recommendations.
 
-This hierarchy has direct implications for both competition and production strategies: investment in collaborative-filtering-style interaction features yields the highest return, while temporal and content features serve as useful secondary signals.
+Similarly, removing user engagement and temporal features produces small improvements, suggesting the model overfits these signals under temporal evaluation. In contrast, item-level and target-encoded features have near-zero impact, indicating they neither help nor harm generalisation.
 
-\subsection{Why Our Validation AUC Far Exceeds Competition Scores}
-\label{sec:validation_gap}
+Figure~\ref{fig:importance} shows the v1 feature importance ranking, where user engagement features dominate. The ablation reveals this ranking is misleading under realistic evaluation.
 
-Our validation AUC of 0.935 dramatically exceeds the winning test score of 0.686. This discrepancy is \emph{not} because our model is superior---it reflects a fundamental difference in evaluation methodology:
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/feature_importance}
+  \caption{Feature importances from XGBoost v1 (random split). User engagement features dominate, but ablation under temporal split reveals they do not generalise.}
+  \label{fig:importance}
+\end{figure}
 
-\begin{enumerate}
-  \item \textbf{Distribution mismatch}: Our validation set is a random sample from the same training distribution (general listening history). The competition test set consists of \emph{first Flow recommendations}---a curated, algorithmically selected context that differs from organic listening behaviour.
-  \item \textbf{Inflated validation from user overlap}: In our random split, the same users appear in both train and validation sets with many interactions each, allowing user-level features (listen rate, affinity scores) to be highly predictive. On the actual test set, the model must predict a \emph{single} new context per user.
-  \item \textbf{Target leakage through item features}: Our item-level features (media listen rate, artist listen rate) are computed from the full training set. In a random split, validation items likely appear in training. On the held-out test set, items may be entirely new to the model.
-\end{enumerate}
+\subsection{Lessons for Competition Strategy}
 
-\subsubsection{What Competition Winners Likely Did Differently}
-
-The top teams (AUC 0.68--0.69) likely employed strategies that produced lower but more honest validation scores:
+Our experiments reveal that maximising a random-split validation score is counterproductive. A more effective competition strategy would:
 \begin{itemize}
-  \item \textbf{Temporal validation}: Splitting by time rather than randomly, since the test set represents a future recommendation event. This produces more realistic generalisation estimates.
-  \item \textbf{Sequence-aware models}: Modelling the \emph{order} of listening events, not just aggregated statistics, since Flow's first recommendation depends on recent session context.
-  \item \textbf{Context-specific features}: Engineering features that capture \emph{why Flow selected this track}---e.g., novelty relative to the user's history, genre transition patterns, and session-level momentum.
-  \item \textbf{Robust regularisation}: Avoiding over-reliance on user-item statistics that inflate validation but fail on distribution-shifted test data.
+  \item Use \textbf{temporal validation} from the start, accepting lower but realistic scores.
+  \item \textbf{Regularise or remove} user--item affinity features that overfit to historical patterns.
+  \item Focus on \textbf{robust features} (item popularity, logistic regression-style signals) that generalise across time.
+  \item Invest in \textbf{sequence-aware modelling} (recent session context, genre transitions) rather than aggregated statistics.
 \end{itemize}
-
-This analysis highlights a critical lesson: \textbf{a high validation score on a convenient split does not imply competition success}. Winning requires evaluation methodology that mirrors the test distribution.
 
 %% ============================================================================
 \section{Q2: What Would We Propose to Solve Deezer's Recommendation Problems?}
 \label{sec:production}
 
-If we worked at Deezer, we would not deploy our competition pipeline directly. A production recommendation system must address challenges that a Kaggle competition ignores entirely.
+If we worked at Deezer, we would not deploy our competition pipeline directly.
 
 \subsection{System Architecture}
 
-We propose a two-stage architecture common in industrial recommender systems~\cite{covington2016deep}:
+We propose a two-stage architecture common in industrial systems~\cite{covington2016deep}:
 
 \begin{enumerate}
-  \item \textbf{Candidate generation}: A lightweight retrieval model selects ${\sim}$1000 candidate tracks from the full catalogue using approximate nearest neighbour search over learned user and item embeddings~\cite{he2017neural}. This stage prioritises recall and must run in $<$50\,ms.
-  \item \textbf{Ranking}: A more expressive model (similar to our competition features) scores each candidate using rich contextual features. The top-$k$ ranked items are then passed through a diversity-aware re-ranking step before presentation to the user.
+  \item \textbf{Candidate generation}: A lightweight model retrieves ${\sim}$1000 candidates from the full catalogue using approximate nearest neighbour search over learned user and item embeddings~\cite{he2017neural}. Our ALS model could serve this purpose---despite its weak standalone AUC, it captures broad preference patterns suitable for retrieval where recall matters more than precision.
+  \item \textbf{Ranking}: A more expressive model (similar to our XGBoost pipeline but without overfitting-prone affinity features) scores candidates using contextual features. The top-$k$ ranked items are then passed through a diversity-aware re-ranking step.
 \end{enumerate}
 
-This decomposition enables sub-second latency even with catalogues of tens of millions of tracks. The candidate generator can be pre-computed and cached, while the ranker operates on a much smaller set.
+This decomposition enables sub-second latency even with catalogues of tens of millions of tracks.
 
-\subsection{Cold-Start Problem}
-\label{sec:coldstart}
+\subsection{Cold Start}
 
-The competition conveniently provides training data for every test user. In production, new users and new tracks arrive constantly~\cite{schein2002methods}:
+The competition provides training data for every test user. In production, new users and new tracks arrive daily~\cite{schein2002methods}. Our experiments directly quantify this challenge:
 
 \begin{itemize}
-  \item \textbf{New users}: Without listening history, we rely on onboarding preferences (selected genres/artists), demographic signals (age, as our EDA showed correlates with skip behaviour), and popularity-based recommendations. As interactions accumulate, collaborative signals gradually take over through an explore-exploit strategy.
-  \item \textbf{New tracks}: For tracks with zero play history, we use content-based features extracted from audio analysis (tempo, energy, valence), artist metadata, and editorial tags. Our smoothed target encoding naturally handles this by falling back to the global mean when $n_c = 0$, providing a reasonable prior.
-  \item \textbf{Exploration}: An $\epsilon$-greedy or Thompson sampling strategy occasionally surfaces new or less popular tracks, accelerating data collection for cold items while preventing the system from converging on a narrow set of safe recommendations.
+  \item Our temporal split had 20.1\% unseen items---and the model's AUC dropped from 0.758 (random) to 0.686 (temporal). Cold items directly degrade performance.
+  \item Our ablation showed user--item affinity features are the most powerful but also most fragile. A cold-start user lacks exactly these signals, falling back to the global mean.
+  \item Our ALS model's weak standalone performance (0.520) shows that even learned embeddings struggle with sparse cold-start interactions.
 \end{itemize}
+
+The production system must gracefully degrade: using demographic signals (our EDA showed age correlates with skip rate), content-based features (audio analysis, genre tags), and popularity-based recommendations for new users, with collaborative signals phased in as interaction history accumulates.
 
 \subsection{Diversity and User Experience}
 
-A system that only optimises listen probability will converge on a narrow set of popular, familiar tracks---the ``filter bubble''~\cite{mcnee2006being}. Flow's value proposition is specifically a \emph{mix of favourites and discoveries}. A production system must therefore:
+A system optimising only listen probability converges on popular, familiar tracks---the ``filter bubble''~\cite{mcnee2006being}. Flow's value proposition is specifically a mix of favourites and discoveries. Production requires diversity-aware re-ranking~\cite{castells2015novelty}, familiarity-novelty balance calibrated per user, and fair exposure for niche artists.
 
-\begin{itemize}
-  \item \textbf{Enforce diversity}: Re-rank to ensure variety in artist, genre, tempo, and mood within each session~\cite{castells2015novelty}. Our EDA showed that users engage with a wide range of genres regardless of skip behaviour, suggesting they value variety.
-  \item \textbf{Balance familiarity and novelty}: Surface known artists alongside new discoveries, calibrated to each user's openness to exploration. The \texttt{user\_knows\_artist} feature from our competition model hints at this dimension.
-  \item \textbf{Ensure fairness}: Avoid systematic bias against niche artists or less popular genres, which harms both user experience and the artist ecosystem.
-\end{itemize}
+\subsection{Scalability and Adaptation}
 
-\subsection{Scalability and Long-Term Engagement}
-
-\begin{itemize}
-  \item \textbf{Incremental updates}: User statistics and item features must update incrementally as new interactions arrive, not require full recomputation over 7.5M+ records.
-  \item \textbf{Real-time serving}: Tree-based models serve predictions in $<$1\,ms; embedding-based retrieval uses approximate nearest neighbour libraries (e.g., FAISS) for sub-linear catalogue search.
-  \item \textbf{User evolution}: Musical tastes change over time. Models should weight recent interactions more heavily and adapt to evolving preferences rather than anchoring on historical averages.
-  \item \textbf{Session awareness}: Users listen in sessions with internal coherence---workout music differs from study sessions. Context-aware and session-based models~\cite{covington2016deep} can capture sequential dependencies that our pointwise classifier misses. As our EDA revealed, temporal context (hour, weekend) already captures coarse session-type information.
-\end{itemize}
+User statistics and item features must update incrementally. Our temporal split showed that the validation listen rate (0.642) differs from training (0.689)---distribution drift that production systems must detect and adapt to. Session-aware models~\cite{covington2016deep} would capture sequential patterns that our pointwise classifier misses.
 
 %% ============================================================================
-\section{Q3: Do These Two Solutions Overlap? Why or Why Not?}
+\section{Q3: Do These Two Solutions Overlap?}
 \label{sec:comparison}
-
-The competition solution and production system share some foundations but diverge in fundamental ways.
 
 \subsection{Where They Overlap}
 
+Several aspects of our work transfer directly:
 \begin{itemize}
-  \item \textbf{Feature engineering transfers}: Temporal context, user engagement statistics, and item popularity are valuable in both settings. The EDA insight that user-artist affinity is the strongest predictor applies universally.
-  \item \textbf{Leakage-free design}: Our strict separation of training and evaluation statistics mirrors the production requirement that models must never use future information.
-  \item \textbf{Scalable model families}: XGBoost and LightGBM are widely used in production ranking systems at companies like Airbnb and Microsoft due to their speed, interpretability, and robustness~\cite{chen2016xgboost, ke2017lightgbm}.
-  \item \textbf{The ranking stage}: Our competition pipeline could serve directly as the second-stage ranker in the production architecture, scoring pre-selected candidates with rich features.
+  \item \textbf{Feature engineering}: Temporal context and item popularity proved valuable and robust under temporal evaluation, making them reliable production features.
+  \item \textbf{Leakage-free design}: Our strict separation of training-time statistics mirrors the production requirement that models must never use future information.
+  \item \textbf{Model families}: XGBoost and LightGBM are widely deployed in production ranking systems at companies like Airbnb and Microsoft~\cite{chen2016xgboost, ke2017lightgbm}, offering sub-millisecond inference.
+  \item \textbf{Two-stage architecture}: Our ALS model could serve as candidate generator while XGBoost (without affinity features) serves as ranker---a natural production decomposition.
 \end{itemize}
 
 \subsection{Where They Diverge}
@@ -333,59 +308,42 @@ The competition solution and production system share some foundations but diverg
 \begin{table}[t]
   \caption{Competition vs.\ production: fundamental differences}
   \label{tab:tradeoffs}
-  \begin{tabular}{p{2.6cm}p{4.5cm}p{4.5cm}}
+  \begin{tabular}{p{2.4cm}p{4.5cm}p{4.5cm}}
     \toprule
     Dimension & Competition & Production \\
     \midrule
-    Objective & Maximise AUC on fixed test set & Maximise long-term user retention and satisfaction \\
-    Cold start & Not a concern (all test users in training) & Critical---new users and tracks arrive daily \\
-    Diversity & Irrelevant to AUC & Essential for Flow's ``favourites + discoveries'' promise \\
-    Latency & Batch prediction, unlimited time & Must be $<$100\,ms per request \\
-    Fairness & Not evaluated & Legal and ethical requirement \\
-    Feedback loop & Static dataset & Dynamic: predictions influence future user behaviour \\
-    Evaluation & Single offline metric & A/B tests, retention, session length, user surveys \\
+    Objective & Maximise AUC on fixed test set & Long-term retention and satisfaction \\
+    Cold start & All test users in training & New users/tracks arrive daily \\
+    Diversity & Irrelevant to AUC & Essential for Flow's promise \\
+    Latency & Batch, unlimited & $<$100\,ms per request \\
+    Feedback & Static dataset & Predictions influence future data \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\subsubsection{Accuracy Is Necessary but Not Sufficient}
+\subsubsection{Our Ablation Exposes the Core Tension}
 
-The most important divergence is in \emph{what success means}. In the competition, a model that perfectly separates listens from skips wins---regardless of whether it recommends the same ten songs to every user. In production, such a model would destroy user engagement within weeks~\cite{mcnee2006being}. Real recommendation quality requires balancing accuracy, diversity, novelty, and fairness---none of which AUC captures.
+Our most striking finding directly illustrates the competition--production gap. User--item affinity features \emph{dominate} random-split evaluation (accounting for $>$70\% of feature importance) but \emph{actively harm} temporal generalisation (removing them improves AUC by 5.1 pp). In production, this pattern would be catastrophic: the model would learn to recommend artists users already know, creating a feedback loop that suppresses discovery. The competition incentivises exactly the features that would fail in production.
 
 \subsubsection{Competition Tricks That Hurt in Production}
 
-Several techniques that boost competition scores are counterproductive in production:
+Target encoding creates popularity feedback loops. Complex ensembles add marginal AUC but double maintenance cost. Overfitting to historical user-artist patterns---our ablation's key finding---would narrow recommendations and degrade long-term engagement.
 
-\begin{itemize}
-  \item \textbf{Heavy target encoding}: Our target-encoded features are powerful but create feedback loops in production---popular items get higher encoded scores, receive more recommendations, and become even more popular, starving niche content of exposure.
-  \item \textbf{Complex ensembles}: Our XGBoost + LightGBM ensemble adds marginal AUC improvement but doubles model maintenance, deployment complexity, and debugging difficulty. In production, a single well-tuned model is usually preferred for operational simplicity.
-  \item \textbf{Overfitting to distribution}: Competition models can overfit to the specific train/test split. Production data is non-stationary---user tastes shift, new music releases change the catalogue, and seasonal patterns create distribution drift that static models cannot handle.
-\end{itemize}
+\subsubsection{Production Requirements Competitions Ignore}
 
-\subsubsection{Production Requirements That Competitions Ignore}
-
-Conversely, several production-critical concerns are entirely absent from competitions:
-
-\begin{itemize}
-  \item \textbf{Latency constraints}: Flow must generate recommendations in real time as users press play. Our batch pipeline has no such constraint.
-  \item \textbf{Explainability}: When Flow recommends a track, users benefit from understanding why (``Because you liked Artist X''). Tree models offer global feature importance, but not the per-prediction explanations needed for user-facing explanations.
-  \item \textbf{Artist ecosystem}: Deezer must balance user satisfaction with fair exposure for artists and labels---a multi-stakeholder optimisation that no single competition metric captures.
-  \item \textbf{Continuous learning}: The competition provides a static snapshot. In production, the model must adapt to trends (e.g., viral tracks), seasonal patterns (e.g., holiday music), and evolving user preferences without full retraining.
-\end{itemize}
+Latency constraints (Flow must respond in real time), explainability (``Because you liked Artist X''), and artist ecosystem fairness (balancing user satisfaction with fair exposure) are entirely absent from competition evaluation.
 
 \subsection{Synthesis}
 
-The competition pipeline provides a strong \emph{component} for production---specifically, the ranking model that scores candidate tracks. However, it cannot function as a standalone system. Production deployment requires wrapping it in a candidate generation layer, diversity-aware re-ranking, cold-start fallbacks, and continuous monitoring infrastructure. The core lesson is that \emph{winning a Kaggle competition and building a good recommender system are related but distinct objectives}, and understanding this distinction is essential for practitioners moving from academic settings to industry.
+The competition pipeline provides a ranking component, but cannot function standalone. Production requires candidate generation, cold-start fallbacks, diversity mechanisms, and continuous monitoring. Our ablation demonstrates the deeper point: \emph{the features that maximise offline metrics are precisely those that fail under distributional shift}---and production \emph{is} distributional shift.
 
 %% ============================================================================
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented a comprehensive approach to the Deezer skip prediction challenge, from exploratory data analysis through feature engineering to model development and evaluation. Our 47-feature pipeline with an XGBoost/LightGBM ensemble achieves 0.935 AUC on a random validation split. We critically examined why this far exceeds the competition winner's 0.686, attributing the gap to evaluation methodology: our random split inflates user-item feature utility, while the actual test set requires generalisation to a distribution-shifted recommendation context.
+We developed a comprehensive approach to Deezer skip prediction, comparing feature-based classifiers, implicit matrix factorisation, and a hybrid model. Our key findings are methodological rather than architectural: evaluation strategy matters more than model complexity. A temporal split produces 0.686 AUC---matching the competition winner---while a random split inflates this to 0.758. Our ablation revealed that user--item affinity features degrade temporal performance by 5.1 pp, and pure ALS achieves only 0.520, demonstrating that skip prediction is a contextual classification problem where collaborative filtering signals are necessary but insufficient.
 
-Our EDA revealed that user engagement patterns are the dominant predictors, temporal consistency issues affect a small but informative fraction of the data, and the choice of validation strategy fundamentally determines reported performance. These findings underscore the importance of honest evaluation in machine learning practice.
-
-We contrasted this competition solution with a production architecture addressing cold start, scalability, diversity, and long-term engagement. Our comparison identifies clear areas of overlap (feature engineering, model families) and divergence (objectives, latency, fairness). The strongest takeaway is that \emph{building a system users love requires far more than maximising a single offline metric}---it requires understanding the full lifecycle of recommendation, from candidate generation to user satisfaction measurement.
+These findings carry implications across paradigms. For competition participants, they argue for temporal validation from the outset. For recommender systems practitioners, they show that the features which dominate offline evaluation may create the most harmful feedback loops in production. For the field, they demonstrate that the boundary between ``recommendation'' and ``classification'' is blurred: effective skip prediction requires elements of both, but the relative contribution of each depends critically on the evaluation regime.
 
 %% ============================================================================
 
@@ -397,9 +355,9 @@ During the preparation of this work, the authors used AI-assisted tools for code
 \section*{Author Contributions}
 
 \begin{itemize}
-  \item \textbf{Vimerlin Govender}: [TODO: Describe contributions]
-  \item \textbf{Meleknur \"Ozg\"u}: [TODO: Describe contributions]
-  \item \textbf{Xinmeng Song}: [TODO: Describe contributions]
+  \item \textbf{Vimerlin Govender}: Data preprocessing pipeline, XGBoost/LightGBM experiments, temporal validation and ablation analysis, report writing.
+  \item \textbf{Meleknur \"Ozg\"u}: Exploratory data analysis, user segmentation, collaborative filtering baselines, production system design discussion.
+  \item \textbf{Xinmeng Song}: Feature engineering (temporal, release, duration features), neural network experiments, baseline model comparison, code review.
 \end{itemize}
 
 %% ============================================================================

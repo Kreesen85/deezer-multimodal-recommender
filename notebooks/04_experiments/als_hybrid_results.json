@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-02-14 14:00:28",
+  "als_factors": 64,
+  "als_auc_all": 0.5203204777461015,
+  "als_auc_warm": 0.5637105566489667,
+  "xgb_base_auc": 0.6856618705551774,
+  "xgb_no_affinity_auc": 0.7357159842043441,
+  "hybrid_auc": 0.6836607706183089,
+  "hybrid_no_affinity_auc": 0.7218957898630973,
+  "mf_feature_importance": {
+    "mf_dot_product": 0.011596388183534145,
+    "mf_cosine_sim": 0.04111689701676369,
+    "mf_user_norm": 0.00563101377338171,
+    "mf_item_norm": 0.02075290121138096
+  }
+}
